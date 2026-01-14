@@ -28,7 +28,7 @@ ROUTINE = {
 START_DATE = datetime(2026, 1, 1)
 DAYS = 30
 STEP_MINUTES = 10
-EMERGENCY_DAY = -1`
+EMERGENCY_DAY = -1
 
 # ----------------------------
 # SIMULATION LOGIC
