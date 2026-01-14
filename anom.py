@@ -26,9 +26,9 @@ ROUTINE = {
 # SIMULATION PARAMETERS
 # ----------------------------
 START_DATE = datetime(2026, 1, 1)
-DAYS = 16
+DAYS = 30
 STEP_MINUTES = 10
-EMERGENCY_DAY = 15  # simulate anomaly on this day
+EMERGENCY_DAY = -1`
 
 # ----------------------------
 # SIMULATION LOGIC
