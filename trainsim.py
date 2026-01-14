@@ -268,9 +268,6 @@ if __name__ == "__main__":
     print("\nThis represents NORMAL elderly behavior patterns only.")
     print("="*60 + "\n")
     
-    response = input("Start generation? (yes/no): ").strip().lower()
-    
-    if response == 'yes':
-        generate_training_data(CSV_FILE, DAYS_OF_DATA)
-    else:
-        print("\nGeneration cancelled.")
+
+    generate_training_data(CSV_FILE, DAYS_OF_DATA)
+

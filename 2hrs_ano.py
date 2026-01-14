@@ -249,4 +249,4 @@ if __name__ == "__main__":
         print("\nmonitor.py should detect and alert during the anomaly period.")
         print("="*60)
         
-            append_anomaly_real_time(CSV_FILE, anomaly_start, anomaly_end)
+        append_anomaly_real_time(CSV_FILE, anomaly_start, anomaly_end)
