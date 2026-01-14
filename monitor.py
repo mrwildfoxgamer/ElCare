@@ -12,6 +12,7 @@ MODEL_FILE = "elderly_behavior_model.pkl"
 INACTIVITY_THRESHOLD_HOURS = 6
 CHECK_INTERVAL = 1  # Check every 1 second (matches data generation)
 ALERT_LOG_FILE = "alerts_log.csv"
+WARNING_LOG_FILE = "warnings_log.csv"
 
 # ============================
 # LOAD MODEL
@@ -25,6 +26,7 @@ print("✓ Model loaded successfully")
 # ============================
 last_processed_count = 0
 alert_history = []
+warning_history = []
 
 # ============================
 # HELPER FUNCTIONS
@@ -85,13 +87,45 @@ def run_inference(hourly):
     hourly["anomaly_score"] = model.decision_function(X)
     hourly["anomaly"] = model.predict(X)
     
-    # Alert logic
-    hourly["alert"] = (
-        (hourly["anomaly"] == -1) &
-        (hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)
+    # Define conditions
+    condition_ml_anomaly = (hourly["anomaly"] == -1)
+    condition_inactivity = (hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)
+    
+    # WARNING: Only one condition is true
+    hourly["warning"] = (
+        (condition_ml_anomaly & ~condition_inactivity) |
+        (~condition_ml_anomaly & condition_inactivity)
     )
     
+    # ALERT: Both conditions are true
+    hourly["alert"] = (condition_ml_anomaly & condition_inactivity)
+    
     return hourly
+
+
+def log_warning(warning_row):
+    """Log warning to file and history"""
+    warning_data = {
+        "timestamp": datetime.now(),
+        "warning_hour": warning_row["hour"],
+        "total_power": warning_row["total_power"],
+        "active_devices": warning_row["active_devices"],
+        "inactivity_streak": warning_row["inactivity_streak"],
+        "anomaly_score": warning_row["anomaly_score"],
+        "ml_anomaly": warning_row["anomaly"] == -1,
+        "high_inactivity": warning_row["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS
+    }
+    
+    warning_history.append(warning_data)
+    
+    # Save to log file
+    df_warning = pd.DataFrame([warning_data])
+    if os.path.exists(WARNING_LOG_FILE):
+        df_warning.to_csv(WARNING_LOG_FILE, mode='a', header=False, index=False)
+    else:
+        df_warning.to_csv(WARNING_LOG_FILE, mode='w', header=True, index=False)
+    
+    return warning_data
 
 
 def log_alert(alert_row):
@@ -117,10 +151,33 @@ def log_alert(alert_row):
     return alert_data
 
 
+def display_warning(warning_data):
+    """Display warning in console"""
+    print("\n" + "="*60)
+    print("⚠️  WARNING - UNUSUAL PATTERN DETECTED")
+    print("="*60)
+    print(f"Detection Time:     {warning_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Warning Hour:       {warning_data['warning_hour']}")
+    print(f"Total Power:        {warning_data['total_power']:.2f} W")
+    print(f"Active Devices:     {int(warning_data['active_devices'])}")
+    print(f"Inactivity Streak:  {warning_data['inactivity_streak']:.0f} hours")
+    print(f"Anomaly Score:      {warning_data['anomaly_score']:.4f}")
+    print("-"*60)
+    
+    if warning_data['ml_anomaly']:
+        print("🔸 ML Model detected anomalous behavior")
+    if warning_data['high_inactivity']:
+        print("🔸 High inactivity detected (>= 6 hours)")
+    
+    print("="*60)
+    print("ℹ️  Monitoring situation - not yet critical")
+    print("="*60 + "\n")
+
+
 def display_alert(alert_data):
     """Display alert in console"""
     print("\n" + "="*60)
-    print("🚨 EMERGENCY ALERT DETECTED! 🚨")
+    print("🚨 EMERGENCY ALERT - IMMEDIATE ATTENTION REQUIRED! 🚨")
     print("="*60)
     print(f"Detection Time:     {alert_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Alert Hour:         {alert_data['alert_hour']}")
@@ -129,7 +186,11 @@ def display_alert(alert_data):
     print(f"Inactivity Streak:  {alert_data['inactivity_streak']:.0f} hours")
     print(f"Anomaly Score:      {alert_data['anomaly_score']:.4f}")
     print("="*60)
-    print("⚠️  Possible emergency situation - Check on elderly person!")
+    print("🔴 BOTH CONDITIONS MET:")
+    print("   • ML Model detected anomaly")
+    print("   • High inactivity (>= 6 hours)")
+    print("="*60)
+    print("⚠️  CRITICAL: Check on elderly person immediately!")
     print("="*60 + "\n")
 
 
@@ -140,7 +201,15 @@ def display_status(hourly, new_entries):
     
     latest = hourly.iloc[-1]
     
-    status = "🟢 NORMAL" if latest["anomaly"] == 1 else "🔴 ANOMALY"
+    # Determine status
+    if latest["alert"]:
+        status = "🚨 EMERGENCY"
+    elif latest["warning"]:
+        status = "⚠️  WARNING"
+    elif latest["anomaly"] == -1:
+        status = "🟡 ML ANOMALY"
+    else:
+        status = "🟢 NORMAL"
     
     print(f"[{datetime.now().strftime('%H:%M:%S')}] "
           f"Status: {status} | "
@@ -159,11 +228,17 @@ def monitor_continuous():
     global last_processed_count
     
     print("\n" + "="*60)
-    print("🔍 REAL-TIME ELDERLY MONITORING SYSTEM")
+    print("🏥 REAL-TIME ELDERLY MONITORING SYSTEM")
     print("="*60)
     print(f"Monitoring file: {DATA_FILE}")
     print(f"Check interval: {CHECK_INTERVAL} second(s)")
     print(f"Inactivity threshold: {INACTIVITY_THRESHOLD_HOURS} hours")
+    print("="*60)
+    print("STATUS LEVELS:")
+    print("  🟢 NORMAL     - All conditions normal")
+    print("  🟡 ML ANOMALY - ML detected anomaly only")
+    print("  ⚠️  WARNING    - One condition met (concerning)")
+    print("  🚨 EMERGENCY  - Both conditions met (critical!)")
     print("="*60)
     print("Press Ctrl+C to stop monitoring\n")
     
@@ -187,15 +262,14 @@ def monitor_continuous():
                 hourly = process_data(df)
                 hourly = run_inference(hourly)
                 
-                # Check for new alerts
+                # Check for new ALERTS (both conditions)
                 alerts = hourly[hourly["alert"]]
                 
                 if not alerts.empty:
-                    # Check if this is a new alert (not already logged)
                     for idx, alert_row in alerts.iterrows():
                         alert_hour = alert_row["hour"]
                         
-                        # Check if we've already alerted for this hour
+                        # Check if already alerted
                         already_alerted = any(
                             a["alert_hour"] == alert_hour 
                             for a in alert_history
@@ -204,6 +278,23 @@ def monitor_continuous():
                         if not already_alerted:
                             alert_data = log_alert(alert_row)
                             display_alert(alert_data)
+                
+                # Check for new WARNINGS (only one condition)
+                warnings = hourly[hourly["warning"]]
+                
+                if not warnings.empty:
+                    for idx, warning_row in warnings.iterrows():
+                        warning_hour = warning_row["hour"]
+                        
+                        # Check if already warned
+                        already_warned = any(
+                            w["warning_hour"] == warning_hour 
+                            for w in warning_history
+                        )
+                        
+                        if not already_warned:
+                            warning_data = log_warning(warning_row)
+                            display_warning(warning_data)
                 
                 # Display status
                 display_status(hourly, new_entries)
@@ -217,7 +308,19 @@ def monitor_continuous():
     except KeyboardInterrupt:
         print("\n\n" + "="*60)
         print("Monitoring stopped by user")
-        print(f"Total alerts detected: {len(alert_history)}")
+        print(f"Total warnings: {len(warning_history)}")
+        print(f"Total alerts: {len(alert_history)}")
+        
+        if warning_history:
+            print("\nWarning Summary:")
+            for i, warning in enumerate(warning_history, 1):
+                conditions = []
+                if warning['ml_anomaly']:
+                    conditions.append("ML Anomaly")
+                if warning['high_inactivity']:
+                    conditions.append("High Inactivity")
+                print(f"  {i}. {warning['warning_hour']} - {', '.join(conditions)}")
+        
         if alert_history:
             print("\nAlert Summary:")
             for i, alert in enumerate(alert_history, 1):

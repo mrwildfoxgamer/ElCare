@@ -8,7 +8,7 @@ import time
 # CONFIGURATION
 # ============================
 CSV_FILE = "test_data.csv"
-ANOMALY_DURATION_HOURS = 2
+ANOMALY_DURATION_HOURS = 7
 STEP_MINUTES = 10  # Must match sim.py
 REAL_TIME_INTERVAL = 1  # Seconds between entries (matches sim.py)
 
@@ -231,7 +231,6 @@ if __name__ == "__main__":
     print("IMPORTANT: Run monitor.py in another terminal BEFORE running this!")
     print("-" * 60)
     
-    input("\nPress ENTER to continue...")
     
     # Plan the anomaly
     result = inject_future_anomaly(CSV_FILE, ANOMALY_DURATION_HOURS)
@@ -250,9 +249,4 @@ if __name__ == "__main__":
         print("\nmonitor.py should detect and alert during the anomaly period.")
         print("="*60)
         
-        response = input("\nStart injection? (yes/no): ").strip().lower()
-        
-        if response == 'yes':
             append_anomaly_real_time(CSV_FILE, anomaly_start, anomaly_end)
-        else:
-            print("\nInjection cancelled.")
