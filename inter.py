@@ -21,14 +21,27 @@ df["timestamp"] = pd.to_datetime(df["timestamp"])
 
 # ============================
 # AGGREGATE TO HOURLY
-# ============================
-df["hour"] = df["timestamp"].dt.floor("H")
+# 1. Group existing data
+df["hour"] = df["timestamp"].dt.floor("h") # Use 'h' (lowercase) to avoid warning
 
-hourly = df.groupby("hour").agg(
-    total_power=("power", "sum"),
-    active_devices=("device", "nunique")
-).reset_index()
+hourly_groups = df.groupby("hour")
 
+# 2. Create a full timeline from start to end (fills the missing "Emergency" gaps)
+full_range = pd.date_range(
+    start=df["hour"].min(), 
+    end=df["hour"].max(), 
+    freq="h"
+)
+
+# 3. Reindex to include the empty hours and fill them with 0
+hourly = pd.DataFrame(index=full_range)
+hourly.index.name = "hour"
+
+hourly["total_power"] = hourly_groups["power"].sum()
+hourly["active_devices"] = hourly_groups["device"].nunique()
+
+# Fill NaNs (created by the reindex) with 0
+hourly = hourly.fillna(0).reset_index()
 # ============================
 # FEATURE ENGINEERING
 # ============================

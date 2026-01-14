@@ -17,14 +17,30 @@ df = pd.read_csv(DATA_FILE)
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 
 # ============================
-# AGGREGATE TO HOURLY DATA
+# AGGREGATE TO HOURLY DATA (FIXED)
 # ============================
-df["hour"] = df["timestamp"].dt.floor("H")
+# 1. Group existing data (use 'h' to avoid warnings)
+df["hour"] = df["timestamp"].dt.floor("h")
+hourly_groups = df.groupby("hour")
 
-hourly = df.groupby("hour").agg(
-    total_power=("power", "sum"),
-    active_devices=("device", "nunique")
-).reset_index()
+# 2. Create a full timeline from start to end
+# This ensures even if data is missing, we have a row for that hour
+full_range = pd.date_range(
+    start=df["hour"].min(), 
+    end=df["hour"].max(), 
+    freq="h"
+)
+
+# 3. Reindex to include the empty hours and fill them with 0
+hourly = pd.DataFrame(index=full_range)
+hourly.index.name = "hour"
+
+hourly["total_power"] = hourly_groups["power"].sum()
+hourly["active_devices"] = hourly_groups["device"].nunique()
+
+# Fill NaNs (created by the reindex for empty hours) with 0
+hourly = hourly.fillna(0).reset_index()
+
 
 # ============================
 # FEATURE ENGINEERING
