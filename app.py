@@ -113,23 +113,46 @@ def get_status():
 
 @app.route('/api/data')
 def get_data():
-    """Read JSON logs and return data for the dashboard"""
+    """Read both Alerts and Warnings logs"""
     data = {
         "recent_alerts": [],
-        "sensor_count": 7, # Hardcoded as requested
+        "sensor_count": 7,
         "total_anomalies": 0
     }
     
-    # Try to read alerts log
+    combined_logs = []
+
+    # 1. Read Alerts (Critical)
     if os.path.exists(LOG_FILE):
         try:
             with open(LOG_FILE, 'r') as f:
-                alerts = json.load(f)
-                # Get last 5 alerts, reversed
-                data["recent_alerts"] = alerts[-5:][::-1]
-                data["total_anomalies"] = len(alerts)
-        except:
-            pass
+                content = f.read().strip()
+                if content:
+                    alerts = json.loads(content)
+                    for a in alerts:
+                        a['type'] = 'ALERT' # Tag it
+                        combined_logs.append(a)
+        except Exception as e:
+            print(f"Error reading alerts: {e}")
+
+    # 2. Read Warnings (The missing piece)
+    if os.path.exists(WARNING_FILE):
+        try:
+            with open(WARNING_FILE, 'r') as f:
+                content = f.read().strip()
+                if content:
+                    warnings = json.loads(content)
+                    for w in warnings:
+                        w['type'] = 'WARNING' # Tag it
+                        combined_logs.append(w)
+        except Exception as e:
+            print(f"Error reading warnings: {e}")
+    
+    # Sort by timestamp (newest first)
+    combined_logs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+    data["recent_alerts"] = combined_logs[:10] # Show last 10 events
+    data["total_anomalies"] = len(combined_logs)
             
     return jsonify(data)
 
@@ -242,8 +265,7 @@ HTML_TEMPLATE = """
                 setIndicator('monitor', data.monitor);
             });
     }
-
-    function updateData() {
+function updateData() {
         fetch('/api/data')
             .then(r => r.json())
             .then(data => {
@@ -259,27 +281,38 @@ HTML_TEMPLATE = """
                 container.innerHTML = '';
                 
                 if (data.recent_alerts.length === 0) {
-                    container.innerHTML = '<div style="padding:10px; color:#aaa">No alerts recorded yet.</div>';
+                    container.innerHTML = '<div style="padding:10px; color:#aaa">No activity recorded yet.</div>';
                 }
 
-                data.recent_alerts.forEach(alert => {
+                data.recent_alerts.forEach(entry => {
                     const div = document.createElement('div');
                     div.className = 'log-entry';
                     
-                    // Format the timestamp nicely
-                    const dateObj = new Date(alert.timestamp);
+                    // Style differently for Warning vs Alert
+                    const isAlert = entry.type === 'ALERT';
+                    const badgeColor = isAlert ? '#e74c3c' : '#f1c40f'; // Red vs Yellow
+                    const badgeText = isAlert ? '🚨 CRITICAL' : '⚠️ WARNING';
+                    
+                    // Border color to match type
+                    div.style.borderLeft = `5px solid ${badgeColor}`;
+                    div.style.background = isAlert ? 'rgba(231, 76, 60, 0.2)' : 'rgba(241, 196, 15, 0.1)';
+
+                    // Format the timestamp
+                    const dateObj = new Date(entry.timestamp);
                     const dateStr = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString();
 
                     div.innerHTML = `
-                        <div class="log-time">📅 ${dateStr}</div>
-                        <div><strong>Score:</strong> ${alert.anomaly_score.toFixed(4)}</div>
-                        <div>⚠️ Inactivity: ${alert.inactivity_streak} hrs</div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                            <span style="color:${badgeColor}; font-weight:bold;">${badgeText}</span>
+                            <span class="log-time">${dateStr}</span>
+                        </div>
+                        <div><strong>Score:</strong> ${entry.anomaly_score.toFixed(4)}</div>
+                        <div><strong>Details:</strong> ${entry.active_devices} devices, ${entry.inactivity_streak}h inactive</div>
                     `;
                     container.appendChild(div);
                 });
             });
     }
-
     function setIndicator(name, isRunning) {
         const dot = document.getElementById('status-' + name);
         const text = document.getElementById('text-' + name);
