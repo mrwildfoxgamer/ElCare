@@ -20,16 +20,20 @@ df = pd.read_csv(DATA_FILE)
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 
 # ============================
-# AGGREGATE TO HOURLY
+# AGGREGATE TO HOURLY (FIXED)
+# ============================
 # 1. Group existing data
-df["hour"] = df["timestamp"].dt.floor("h") # Use 'h' (lowercase) to avoid warning
-
+df["hour"] = df["timestamp"].dt.floor("h")
 hourly_groups = df.groupby("hour")
 
-# 2. Create a full timeline from start to end (fills the missing "Emergency" gaps)
+# 2. Define the timeline explicitly
+# In a live system, 'end' would be pd.Timestamp.now().
+# For this simulation, we manually extend it to cover the emergency day.
+simulated_end_date = df["hour"].max() + pd.Timedelta(hours=24) 
+
 full_range = pd.date_range(
     start=df["hour"].min(), 
-    end=df["hour"].max(), 
+    end=simulated_end_date, # Use the extended end date
     freq="h"
 )
 
