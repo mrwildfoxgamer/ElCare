@@ -14,13 +14,13 @@ app = Flask(__name__)
 SCRIPTS = {
     "sim": "sim.py",
     "monitor": "monitor.py",
-    "ano_sequence": "2hrs_ano.py"
+    "ano_sequence": "2hrs_ano.py",
+    "conf_em": "conf_em.py"
 }
 
-LOG_FILE = "alerts_log.json" # Focusing on alerts, but can be adapted
+LOG_FILE = "alerts_log.json"
 WARNING_FILE = "warnings_log.json"
 
-# Global dictionary to store running processes
 processes = {
     "sim": None,
     "monitor": None
@@ -30,24 +30,20 @@ processes = {
 # HELPER FUNCTIONS
 # ============================
 def start_script(script_key):
-    """Starts a script in a subprocess if not already running."""
     global processes
     if processes.get(script_key) is None:
-        # Popen starts the script in the background
         proc = subprocess.Popen(["python", SCRIPTS[script_key]])
         processes[script_key] = proc
         return True
     return False
 
 def stop_script(script_key):
-    """Stops a running script."""
     global processes
     proc = processes.get(script_key)
     if proc:
-        # Terminate the process
-        if os.name == 'nt': # Windows
+        if os.name == 'nt':
             subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)])
-        else: # Linux/Mac
+        else:
             os.kill(proc.pid, signal.SIGTERM)
         
         processes[script_key] = None
@@ -55,24 +51,22 @@ def stop_script(script_key):
     return False
 
 def run_sequence_logic():
-    """
-    Logic for Button 3:
-    1. Stop sim.py
-    2. Run 2hrs_ano.py (wait for it to finish)
-    3. Resume sim.py
-    """
     print("--- Starting Sequence ---")
-    
-    # 1. Stop Sim
     stop_script("sim")
     print("Stopped Simulation.")
-    
-    # 2. Run 2hrs_ano.py (Blocking call)
     print("Running 2hrs_ano.py...")
     subprocess.run(["python", SCRIPTS["ano_sequence"]])
     print("2hrs_ano.py finished.")
-    
-    # 3. Resume Sim
+    start_script("sim")
+    print("Resumed Simulation.")
+
+def run_conf_em_logic():
+    print("--- Starting Confirmed Emergency Sequence ---")
+    stop_script("sim")
+    print("Stopped Simulation.")
+    print("Running conf_em.py...")
+    subprocess.run(["python", SCRIPTS["conf_em"]])
+    print("conf_em.py finished.")
     start_script("sim")
     print("Resumed Simulation.")
 
@@ -86,7 +80,6 @@ def index():
 
 @app.route('/api/control', methods=['POST'])
 def control():
-    """Handle Start/Stop buttons"""
     data = request.json
     action = data.get('action')
     target = data.get('target')
@@ -100,20 +93,22 @@ def control():
 
 @app.route('/api/sequence', methods=['POST'])
 def trigger_sequence():
-    """Handle the special Sequence Button (runs in background thread)"""
-    # Run in a separate thread so the web page doesn't freeze
     thread = threading.Thread(target=run_sequence_logic)
     thread.start()
     return jsonify({"status": "started", "message": "Sequence initiated: Stopping Sim -> Running Ano -> Resuming Sim"})
 
+@app.route('/api/conf_em', methods=['POST'])
+def trigger_conf_em():
+    thread = threading.Thread(target=run_conf_em_logic)
+    thread.start()
+    return jsonify({"status": "started", "message": "Emergency Sequence initiated: Stopping Sim -> Running conf_em -> Resuming Sim"})
+
 @app.route('/api/status')
 def get_status():
-    """Get status of running scripts"""
     return jsonify({k: (v is not None) for k, v in processes.items()})
 
 @app.route('/api/data')
 def get_data():
-    """Read both Alerts and Warnings logs"""
     data = {
         "recent_alerts": [],
         "sensor_count": 7,
@@ -122,7 +117,6 @@ def get_data():
     
     combined_logs = []
 
-    # 1. Read Alerts (Critical)
     if os.path.exists(LOG_FILE):
         try:
             with open(LOG_FILE, 'r') as f:
@@ -130,12 +124,11 @@ def get_data():
                 if content:
                     alerts = json.loads(content)
                     for a in alerts:
-                        a['type'] = 'ALERT' # Tag it
+                        a['type'] = 'ALERT'
                         combined_logs.append(a)
         except Exception as e:
             print(f"Error reading alerts: {e}")
 
-    # 2. Read Warnings (The missing piece)
     if os.path.exists(WARNING_FILE):
         try:
             with open(WARNING_FILE, 'r') as f:
@@ -143,15 +136,14 @@ def get_data():
                 if content:
                     warnings = json.loads(content)
                     for w in warnings:
-                        w['type'] = 'WARNING' # Tag it
+                        w['type'] = 'WARNING'
                         combined_logs.append(w)
         except Exception as e:
             print(f"Error reading warnings: {e}")
     
-    # Sort by timestamp (newest first)
     combined_logs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
 
-    data["recent_alerts"] = combined_logs[:10] # Show last 10 events
+    data["recent_alerts"] = combined_logs[:10]
     data["total_anomalies"] = len(combined_logs)
             
     return jsonify(data)
@@ -170,23 +162,22 @@ HTML_TEMPLATE = """
         :root { --bg: #1a1a2e; --card: #16213e; --text: #e94560; --accent: #0f3460; --white: #fff; }
         body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg); color: var(--white); padding: 20px; margin: 0; }
         
-        .container { max-width: 1000px; margin: 0 auto; }
+        .container { max-width: 1200px; margin: 0 auto; }
         h1 { text-align: center; color: var(--text); border-bottom: 2px solid var(--accent); padding-bottom: 10px; }
         
-        /* Control Panel */
-        .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; }
+        .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px; }
         .control-card { background: var(--card); padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         
         button { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.2s; width: 100%; margin-top: 10px; }
         .btn-start { background-color: #2ecc71; color: white; }
         .btn-stop { background-color: #e74c3c; color: white; }
         .btn-seq { background-color: #f1c40f; color: black; }
+        .btn-emergency { background-color: #e74c3c; color: white; }
         button:hover { opacity: 0.9; transform: scale(1.02); }
         
         .status-dot { height: 12px; width: 12px; background-color: #555; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .running { background-color: #2ecc71; box-shadow: 0 0 10px #2ecc71; }
 
-        /* Data Display */
         .data-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
         
         .info-box { background: var(--card); padding: 25px; border-radius: 10px; border-left: 5px solid var(--text); }
@@ -203,7 +194,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="container">
-    <h1>🏥 Monitor Control Center</h1>
+    <h1>ðŸ¥ Monitor Control Center</h1>
 
     <div class="controls">
         <div class="control-card">
@@ -224,6 +215,12 @@ HTML_TEMPLATE = """
             <h3>Anomaly Test</h3>
             <p style="font-size:0.8em; color:#aaa;">Stops Sim -> Runs 2hrs_ano -> Resumes Sim</p>
             <button class="btn-seq" onclick="triggerSequence()">RUN SEQUENCE</button>
+        </div>
+
+        <div class="control-card">
+            <h3>Force Emergency</h3>
+            <p style="font-size:0.8em; color:#aaa;">Stops Sim -> Runs conf_em -> Resumes Sim</p>
+            <button class="btn-emergency" onclick="triggerConfEm()">FORCE EMERGENCY</button>
         </div>
     </div>
 
@@ -256,7 +253,6 @@ HTML_TEMPLATE = """
 </div>
 
 <script>
-    // Update UI based on API data
     function updateStatus() {
         fetch('/api/status')
             .then(r => r.json())
@@ -265,18 +261,17 @@ HTML_TEMPLATE = """
                 setIndicator('monitor', data.monitor);
             });
     }
-function updateData() {
+    
+    function updateData() {
         fetch('/api/data')
             .then(r => r.json())
             .then(data => {
-                // Update Stats
                 document.getElementById('sensor-count').innerText = data.sensor_count;
                 document.getElementById('total-anomalies').innerText = data.total_anomalies;
                 
                 const now = new Date();
                 document.getElementById('last-update').innerText = now.toLocaleTimeString();
 
-                // Update Logs
                 const container = document.getElementById('alerts-container');
                 container.innerHTML = '';
                 
@@ -288,16 +283,13 @@ function updateData() {
                     const div = document.createElement('div');
                     div.className = 'log-entry';
                     
-                    // Style differently for Warning vs Alert
                     const isAlert = entry.type === 'ALERT';
-                    const badgeColor = isAlert ? '#e74c3c' : '#f1c40f'; // Red vs Yellow
-                    const badgeText = isAlert ? '🚨 CRITICAL' : '⚠️ WARNING';
+                    const badgeColor = isAlert ? '#e74c3c' : '#f1c40f';
+                    const badgeText = isAlert ? 'ðŸš¨ CRITICAL' : 'âš ï¸ WARNING';
                     
-                    // Border color to match type
                     div.style.borderLeft = `5px solid ${badgeColor}`;
                     div.style.background = isAlert ? 'rgba(231, 76, 60, 0.2)' : 'rgba(241, 196, 15, 0.1)';
 
-                    // Format the timestamp
                     const dateObj = new Date(entry.timestamp);
                     const dateStr = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString();
 
@@ -313,6 +305,7 @@ function updateData() {
                 });
             });
     }
+    
     function setIndicator(name, isRunning) {
         const dot = document.getElementById('status-' + name);
         const text = document.getElementById('text-' + name);
@@ -327,7 +320,6 @@ function updateData() {
         }
     }
 
-    // Button Actions
     function controlScript(action, target) {
         fetch('/api/control', {
             method: 'POST',
@@ -344,7 +336,14 @@ function updateData() {
             .then(data => alert(data.message));
     }
 
-    // Poll for updates every 2 seconds
+    function triggerConfEm() {
+        if(!confirm("This will FORCE an emergency condition. Stop sim -> Run conf_em.py -> Resume sim. Proceed?")) return;
+        
+        fetch('/api/conf_em', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => alert(data.message));
+    }
+
     setInterval(updateStatus, 2000);
     setInterval(updateData, 2000);
     updateStatus();
