@@ -26,9 +26,9 @@ ROUTINE = {
 # SIMULATION PARAMETERS
 # ----------------------------
 START_DATE = datetime(2026, 1, 1)
-DAYS = 14
+DAYS = 16
 STEP_MINUTES = 10
-EMERGENCY_DAY = -1  # simulate anomaly on this day
+EMERGENCY_DAY = 15  # simulate anomaly on this day
 
 # ----------------------------
 # SIMULATION LOGIC
@@ -91,6 +91,6 @@ for day in range(DAYS):
 # SAVE OUTPUT
 # ----------------------------
 df = pd.DataFrame(events)
-df.to_csv("train_data.csv", index=False)  # Change filename
-print("Saved Clean Data to train_data.csv")
+df.to_csv("test_data.csv", index=False) # Save as test data
+print("Saved Anomaly Data to test_data.csv")
 

@@ -5,9 +5,9 @@ from sklearn.ensemble import IsolationForest
 # ============================
 # CONFIG
 # ============================
-DATA_FILE = "simulated_house_data.csv"
+DATA_FILE = "train_data.csv"
 MODEL_FILE = "elderly_behavior_model.pkl"
-ANOMALY_CONTAMINATION = 0.05
+ANOMALY_CONTAMINATION = 0.01
 INACTIVITY_THRESHOLD_HOURS = 6
 
 # ============================
@@ -48,17 +48,15 @@ FEATURES = [
 # TRAIN ON NORMAL DATA ONLY
 # (exclude last 24 hours)
 # ============================
-train_data = hourly.iloc[:-24]
-X_train = train_data[FEATURES]
+X_train = hourly[FEATURES] 
 
 model = IsolationForest(
     n_estimators=200,
-    contamination=ANOMALY_CONTAMINATION,
+    contamination=ANOMALY_CONTAMINATION, 
     random_state=42
 )
 
 model.fit(X_train)
-
 # ============================
 # SAVE MODEL
 # ============================

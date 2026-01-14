@@ -4,7 +4,7 @@ import joblib
 # ============================
 # CONFIG
 # ============================
-DATA_FILE = "new_house_data.csv"   # new dataset
+DATA_FILE = "test_data.csv"   # new dataset
 MODEL_FILE = "elderly_behavior_model.pkl"
 INACTIVITY_THRESHOLD_HOURS = 6
 
