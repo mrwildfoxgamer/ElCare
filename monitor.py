@@ -2,6 +2,7 @@ import pandas as pd
 import joblib
 import time
 import os
+import json
 from datetime import datetime
 
 # ============================
@@ -9,10 +10,10 @@ from datetime import datetime
 # ============================
 DATA_FILE = "test_data.csv"
 MODEL_FILE = "elderly_behavior_model.pkl"
-INACTIVITY_THRESHOLD_HOURS = 6
+INACTIVITY_THRESHOLD_HOURS = 3
 CHECK_INTERVAL = 1  # Check every 1 second (matches data generation)
-ALERT_LOG_FILE = "alerts_log.csv"
-WARNING_LOG_FILE = "warnings_log.csv"
+ALERT_LOG_FILE = "alerts_log.json"
+WARNING_LOG_FILE = "warnings_log.json"
 
 # ============================
 # LOAD MODEL
@@ -106,24 +107,29 @@ def run_inference(hourly):
 def log_warning(warning_row):
     """Log warning to file and history"""
     warning_data = {
-        "timestamp": datetime.now(),
-        "warning_hour": warning_row["hour"],
-        "total_power": warning_row["total_power"],
-        "active_devices": warning_row["active_devices"],
-        "inactivity_streak": warning_row["inactivity_streak"],
-        "anomaly_score": warning_row["anomaly_score"],
-        "ml_anomaly": warning_row["anomaly"] == -1,
-        "high_inactivity": warning_row["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS
+        "timestamp": datetime.now().isoformat(),
+        "warning_hour": warning_row["hour"].isoformat(),
+        "total_power": float(warning_row["total_power"]),
+        "active_devices": int(warning_row["active_devices"]),
+        "inactivity_streak": float(warning_row["inactivity_streak"]),
+        "anomaly_score": float(warning_row["anomaly_score"]),
+        "ml_anomaly": bool(warning_row["anomaly"] == -1),
+        "high_inactivity": bool(warning_row["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)
     }
     
     warning_history.append(warning_data)
     
-    # Save to log file
-    df_warning = pd.DataFrame([warning_data])
+    # Load existing data, append, and save
     if os.path.exists(WARNING_LOG_FILE):
-        df_warning.to_csv(WARNING_LOG_FILE, mode='a', header=False, index=False)
+        with open(WARNING_LOG_FILE, 'r') as f:
+            warnings = json.load(f)
     else:
-        df_warning.to_csv(WARNING_LOG_FILE, mode='w', header=True, index=False)
+        warnings = []
+    
+    warnings.append(warning_data)
+    
+    with open(WARNING_LOG_FILE, 'w') as f:
+        json.dump(warnings, f, indent=2)
     
     return warning_data
 
@@ -131,22 +137,27 @@ def log_warning(warning_row):
 def log_alert(alert_row):
     """Log alert to file and history"""
     alert_data = {
-        "timestamp": datetime.now(),
-        "alert_hour": alert_row["hour"],
-        "total_power": alert_row["total_power"],
-        "active_devices": alert_row["active_devices"],
-        "inactivity_streak": alert_row["inactivity_streak"],
-        "anomaly_score": alert_row["anomaly_score"]
+        "timestamp": datetime.now().isoformat(),
+        "alert_hour": alert_row["hour"].isoformat(),
+        "total_power": float(alert_row["total_power"]),
+        "active_devices": int(alert_row["active_devices"]),
+        "inactivity_streak": float(alert_row["inactivity_streak"]),
+        "anomaly_score": float(alert_row["anomaly_score"])
     }
     
     alert_history.append(alert_data)
     
-    # Save to log file
-    df_alert = pd.DataFrame([alert_data])
+    # Load existing data, append, and save
     if os.path.exists(ALERT_LOG_FILE):
-        df_alert.to_csv(ALERT_LOG_FILE, mode='a', header=False, index=False)
+        with open(ALERT_LOG_FILE, 'r') as f:
+            alerts = json.load(f)
     else:
-        df_alert.to_csv(ALERT_LOG_FILE, mode='w', header=True, index=False)
+        alerts = []
+    
+    alerts.append(alert_data)
+    
+    with open(ALERT_LOG_FILE, 'w') as f:
+        json.dump(alerts, f, indent=2)
     
     return alert_data
 
@@ -154,12 +165,12 @@ def log_alert(alert_row):
 def display_warning(warning_data):
     """Display warning in console"""
     print("\n" + "="*60)
-    print("⚠️  WARNING - UNUSUAL PATTERN DETECTED")
+    print("⚠️ WARNING - UNUSUAL PATTERN DETECTED")
     print("="*60)
-    print(f"Detection Time:     {warning_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Detection Time:     {warning_data['timestamp']}")
     print(f"Warning Hour:       {warning_data['warning_hour']}")
     print(f"Total Power:        {warning_data['total_power']:.2f} W")
-    print(f"Active Devices:     {int(warning_data['active_devices'])}")
+    print(f"Active Devices:     {warning_data['active_devices']}")
     print(f"Inactivity Streak:  {warning_data['inactivity_streak']:.0f} hours")
     print(f"Anomaly Score:      {warning_data['anomaly_score']:.4f}")
     print("-"*60)
@@ -170,7 +181,7 @@ def display_warning(warning_data):
         print("🔸 High inactivity detected (>= 6 hours)")
     
     print("="*60)
-    print("ℹ️  Monitoring situation - not yet critical")
+    print("ℹ️ Monitoring situation - not yet critical")
     print("="*60 + "\n")
 
 
@@ -179,10 +190,10 @@ def display_alert(alert_data):
     print("\n" + "="*60)
     print("🚨 EMERGENCY ALERT - IMMEDIATE ATTENTION REQUIRED! 🚨")
     print("="*60)
-    print(f"Detection Time:     {alert_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Detection Time:     {alert_data['timestamp']}")
     print(f"Alert Hour:         {alert_data['alert_hour']}")
     print(f"Total Power:        {alert_data['total_power']:.2f} W")
-    print(f"Active Devices:     {int(alert_data['active_devices'])}")
+    print(f"Active Devices:     {alert_data['active_devices']}")
     print(f"Inactivity Streak:  {alert_data['inactivity_streak']:.0f} hours")
     print(f"Anomaly Score:      {alert_data['anomaly_score']:.4f}")
     print("="*60)
@@ -190,7 +201,7 @@ def display_alert(alert_data):
     print("   • ML Model detected anomaly")
     print("   • High inactivity (>= 6 hours)")
     print("="*60)
-    print("⚠️  CRITICAL: Check on elderly person immediately!")
+    print("⚠️ CRITICAL: Check on elderly person immediately!")
     print("="*60 + "\n")
 
 
@@ -235,7 +246,7 @@ def monitor_continuous():
     print("STATUS LEVELS:")
     print("  🟢 NORMAL     - All conditions normal")
     print("  🟡 ML ANOMALY - ML detected anomaly only")
-    print("  ⚠️  WARNING    - One condition met (concerning)")
+    print("  ⚠️ WARNING    - One condition met (concerning)")
     print("  🚨 EMERGENCY  - Both conditions met (critical!)")
     print("="*60)
     print("Press Ctrl+C to stop monitoring\n")
@@ -269,7 +280,7 @@ def monitor_continuous():
                         
                         # Check if already alerted
                         already_alerted = any(
-                            a["alert_hour"] == alert_hour 
+                            a["alert_hour"] == alert_hour.isoformat()
                             for a in alert_history
                         )
                         
@@ -286,7 +297,7 @@ def monitor_continuous():
                         
                         # Check if already warned
                         already_warned = any(
-                            w["warning_hour"] == warning_hour 
+                            w["warning_hour"] == warning_hour.isoformat()
                             for w in warning_history
                         )
                         
