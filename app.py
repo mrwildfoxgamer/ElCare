@@ -4,6 +4,7 @@ import time
 import subprocess
 import threading
 import signal
+import atexit
 from flask import Flask, render_template_string, jsonify, request
 
 app = Flask(__name__)
@@ -26,6 +27,8 @@ processes = {
     "monitor": None
 }
 
+sequence_lock = threading.Lock()
+
 # ============================
 # HELPER FUNCTIONS
 # ============================
@@ -33,7 +36,6 @@ def start_script(script_key):
     global processes
     if processes.get(script_key) is None:
         try:
-            # Unix/Linux specific for independent process
             proc = subprocess.Popen(["python", SCRIPTS[script_key]])
             processes[script_key] = proc
             return True
@@ -51,6 +53,10 @@ def stop_script(script_key):
                 subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)])
             else:
                 os.kill(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if os.name != 'nt':
+                os.kill(proc.pid, signal.SIGKILL)
         except Exception as e:
             print(f"Error stopping process: {e}")
         
@@ -58,25 +64,46 @@ def stop_script(script_key):
         return True
     return False
 
+def cleanup_processes():
+    """Clean up all running processes on shutdown"""
+    for key in list(processes.keys()):
+        stop_script(key)
+
+atexit.register(cleanup_processes)
+
 def run_sequence_logic():
-    print("--- Starting Sequence ---")
-    stop_script("sim")
-    print("Stopped Simulation.")
-    print("Running 2hrs_ano.py...")
-    subprocess.run(["python", SCRIPTS["ano_sequence"]])
-    print("2hrs_ano.py finished.")
-    start_script("sim")
-    print("Resumed Simulation.")
+    if not sequence_lock.acquire(blocking=False):
+        print("Sequence already running, skipping...")
+        return
+    
+    try:
+        print("--- Starting Sequence ---")
+        stop_script("sim")
+        print("Stopped Simulation.")
+        print("Running 2hrs_ano.py...")
+        subprocess.run(["python", SCRIPTS["ano_sequence"]])
+        print("2hrs_ano.py finished.")
+        start_script("sim")
+        print("Resumed Simulation.")
+    finally:
+        sequence_lock.release()
 
 def run_conf_em_logic():
-    print("--- Starting Confirmed Emergency Sequence ---")
-    stop_script("sim")
-    print("Stopped Simulation.")
-    print("Running conf_em.py...")
-    subprocess.run(["python", SCRIPTS["conf_em"]])
-    print("conf_em.py finished.")
-    start_script("sim")
-    print("Resumed Simulation.")
+    if not sequence_lock.acquire(blocking=False):
+        print("Emergency sequence already running, skipping...")
+        return
+    
+    try:
+        print("--- Starting Confirmed Emergency Sequence ---")
+        stop_script("sim")
+        print("Stopped Simulation.")
+        print("Running conf_em.py...")
+        subprocess.run(["python", SCRIPTS["conf_em"]])
+        print("conf_em.py finished.")
+        start_script("sim")
+        print("Resumed Simulation.")
+    finally:
+        sequence_lock.release()
 
 # ============================
 # WEB ROUTES
@@ -135,6 +162,8 @@ def get_data():
                     for a in alerts:
                         a['type'] = 'ALERT'
                         combined_logs.append(a)
+        except json.JSONDecodeError:
+            print(f"Invalid JSON in {LOG_FILE}")
         except Exception as e:
             print(f"Error reading alerts: {e}")
 
@@ -148,13 +177,15 @@ def get_data():
                     for w in warnings:
                         w['type'] = 'WARNING'
                         combined_logs.append(w)
+        except json.JSONDecodeError:
+            print(f"Invalid JSON in {WARNING_FILE}")
         except Exception as e:
             print(f"Error reading warnings: {e}")
     
     # Sort by timestamp descending
     combined_logs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
 
-    data["recent_alerts"] = combined_logs[:15] # Increased limit for better visibility
+    data["recent_alerts"] = combined_logs[:15]
     data["total_anomalies"] = len(combined_logs)
             
     return jsonify(data)
@@ -299,7 +330,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="container">
-    <h1>ðŸ¥ Elderly Monitoring Dashboard</h1>
+    <h1>🏥 Elderly Monitoring Dashboard</h1>
 
     <div class="top-grid">
         <div class="card">
@@ -308,7 +339,7 @@ HTML_TEMPLATE = """
             <div class="stat-item">
                 <span class="stat-label">Sensors Status</span>
                 <span class="stat-value" id="sensor-count">...</span>
-                <span class="online-badge">â—  ONLINE</span>
+                <span class="online-badge">● ONLINE</span>
             </div>
 
             <div class="stat-item">
@@ -384,14 +415,14 @@ HTML_TEMPLATE = """
 </div>
 
 <div id="sos-overlay">
-    <div class="calling-icon">ðŸ“ž</div>
+    <div class="calling-icon">📞</div>
     <div class="calling-text">Contacting Emergency Services...</div>
     <div class="calling-number" id="overlay-number">Connecting...</div>
     <button onclick="stopSOS()" style="margin-top: 30px; padding: 10px 30px; background: #555; border: 1px solid white; color: white; border-radius: 5px; cursor: pointer;">CANCEL</button>
 </div>
 
 <script>
-    let contacts = ['911', '112']; # Default contacts
+    let contacts = ['911', '112']; // Default contacts
 
     // ================= CONTACTS LOGIC =================
     function renderContacts() {
@@ -399,7 +430,7 @@ HTML_TEMPLATE = """
         ul.innerHTML = '';
         contacts.forEach((num, index) => {
             const li = document.createElement('li');
-            li.innerHTML = `<span>ðŸ“ž ${num}</span> <span class="remove-contact" onclick="removeContact(${index})">x</span>`;
+            li.innerHTML = `<span>📞 ${num}</span> <span class="remove-contact" onclick="removeContact(${index})">x</span>`;
             ul.appendChild(li);
         });
     }
@@ -465,8 +496,7 @@ HTML_TEMPLATE = """
 
                 const container = document.getElementById('alerts-container');
                 
-                // Only redraw if count changed to avoid jitter, 
-                // but in a real app we might check IDs. Simplified here.
+                // Only redraw if count changed to avoid jitter
                 if (data.recent_alerts.length !== lastAlertCount) {
                     container.innerHTML = '';
                     lastAlertCount = data.recent_alerts.length;
@@ -480,7 +510,7 @@ HTML_TEMPLATE = """
                         const isAlert = entry.type === 'ALERT';
                         div.className = isAlert ? 'log-entry alert' : 'log-entry warning';
                         
-                        const badgeText = isAlert ? 'ðŸš¨ CRITICAL ALERT' : 'âš ï¸  WARNING';
+                        const badgeText = isAlert ? '🚨 CRITICAL ALERT' : '⚠️ WARNING';
                         const color = isAlert ? '#e74c3c' : '#f1c40f';
                         
                         const dateObj = new Date(entry.timestamp);
