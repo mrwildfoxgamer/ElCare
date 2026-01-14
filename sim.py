@@ -1,6 +1,8 @@
 import random
 import pandas as pd
 from datetime import datetime, timedelta
+import time
+import os
 
 # ----------------------------
 # HOUSE CONFIGURATION
@@ -23,15 +25,15 @@ ROUTINE = {
 }
 
 # ----------------------------
-# SIMULATION PARAMETERS
+# CONFIGURATION
 # ----------------------------
-START_DATE = datetime(2026, 1, 1)
-DAYS = 14
-STEP_MINUTES = 10
-EMERGENCY_DAY = -1  # simulate anomaly on this day
+CSV_FILE = "test_data.csv"  # File to append to
+STEP_MINUTES = 10           # Simulated time step (10 minutes)
+REAL_TIME_INTERVAL = 1      # Real-world seconds between entries
+RUN_CONTINUOUSLY = True     # Set to False to generate only one entry
 
 # ----------------------------
-# SIMULATION LOGIC
+# HELPER FUNCTIONS
 # ----------------------------
 def is_time_between(hour, start, end):
     if start <= end:
@@ -40,6 +42,7 @@ def is_time_between(hour, start, end):
 
 
 def generate_activity(hour, emergency=False):
+    """Generate activity based on time of day (no anomalies)"""
     active_devices = []
 
     if emergency:
@@ -64,33 +67,111 @@ def generate_activity(hour, emergency=False):
     return active_devices
 
 
+def append_to_csv(events, filename):
+    """Append new events to CSV file"""
+    df_new = pd.DataFrame(events)
+    
+    # Check if file exists
+    if os.path.exists(filename):
+        # Append without header
+        df_new.to_csv(filename, mode='a', header=False, index=False)
+    else:
+        # Create new file with header
+        df_new.to_csv(filename, mode='w', header=True, index=False)
+
+
+def generate_single_entry(simulated_time=None):
+    """Generate a single 10-minute entry
+    
+    Args:
+        simulated_time: Use this time instead of real time (for simulation)
+    """
+    if simulated_time is None:
+        simulated_time = datetime.now()
+    
+    hour = simulated_time.hour
+    
+    # Generate activity for current hour (no emergency)
+    active_devices = generate_activity(hour, emergency=False)
+    
+    events = []
+    for device in active_devices:
+        events.append({
+            "timestamp": simulated_time,
+            "device": device,
+            "power": DEVICES[device],
+            "state": "ON"
+        })
+    
+    return events, simulated_time
+
+
 # ----------------------------
-# RUN SIMULATION
+# MAIN EXECUTION
 # ----------------------------
-events = []
-current_time = START_DATE
-
-for day in range(DAYS):
-    emergency = (day == EMERGENCY_DAY)
-
-    for _ in range(int(24 * 60 / STEP_MINUTES)):
-        hour = current_time.hour
-        active = generate_activity(hour, emergency)
-
-        for device in active:
-            events.append({
-                "timestamp": current_time,
-                "device": device,
-                "power": DEVICES[device],
-                "state": "ON"
-            })
-
-        current_time += timedelta(minutes=STEP_MINUTES)
-
-# ----------------------------
-# SAVE OUTPUT
-# ----------------------------
-df = pd.DataFrame(events)
-df.to_csv("train_data.csv", index=False)  # Change filename
-print("Saved Clean Data to train_data.csv")
-
+if __name__ == "__main__":
+    print(f"Starting real-time data generation...")
+    print(f"Appending to: {CSV_FILE}")
+    print(f"Simulated time step: {STEP_MINUTES} minutes")
+    print(f"Real-world interval: {REAL_TIME_INTERVAL} second(s)")
+    print(f"Time compression: {STEP_MINUTES * 60}x (10 min = 1 sec)")
+    print(f"Continuous mode: {RUN_CONTINUOUSLY}")
+    print("-" * 50)
+    
+    # Initialize simulated time
+    # Check if file exists to continue from last timestamp
+    if os.path.exists(CSV_FILE):
+        try:
+            df_existing = pd.read_csv(CSV_FILE)
+            if not df_existing.empty:
+                df_existing["timestamp"] = pd.to_datetime(df_existing["timestamp"])
+                last_time = df_existing["timestamp"].max()
+                simulated_time = last_time + timedelta(minutes=STEP_MINUTES)
+                print(f"Resuming from last timestamp: {last_time}")
+                print(f"Next entry will be: {simulated_time}")
+            else:
+                simulated_time = datetime.now()
+        except:
+            simulated_time = datetime.now()
+    else:
+        simulated_time = datetime.now()
+        print(f"Starting new simulation at: {simulated_time}")
+    
+    print("-" * 50)
+    
+    if RUN_CONTINUOUSLY:
+        # Run continuously, generating new data every 1 second (representing 10 minutes)
+        try:
+            iteration = 0
+            while True:
+                events, timestamp = generate_single_entry(simulated_time)
+                
+                if events:
+                    append_to_csv(events, CSV_FILE)
+                    print(f"[Iter {iteration:04d}] {timestamp.strftime('%Y-%m-%d %H:%M:%S')} | Added {len(events)} device events")
+                else:
+                    print(f"[Iter {iteration:04d}] {timestamp.strftime('%Y-%m-%d %H:%M:%S')} | No activity (normal)")
+                
+                # Advance simulated time by 10 minutes
+                simulated_time += timedelta(minutes=STEP_MINUTES)
+                iteration += 1
+                
+                # Wait for 1 second in real time
+                time.sleep(REAL_TIME_INTERVAL)
+                
+        except KeyboardInterrupt:
+            print("\n\nStopped by user.")
+            print(f"Final simulated time: {simulated_time}")
+            print("Data generation completed.")
+    
+    else:
+        # Generate only one entry
+        events, timestamp = generate_single_entry(simulated_time)
+        
+        if events:
+            append_to_csv(events, CSV_FILE)
+            print(f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] Added {len(events)} device events")
+        else:
+            print(f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] No activity (normal for this time)")
+        
+        print("Single entry generated successfully.")
