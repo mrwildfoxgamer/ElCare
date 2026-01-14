@@ -91,6 +91,6 @@ for day in range(DAYS):
 # SAVE OUTPUT
 # ----------------------------
 df = pd.DataFrame(events)
-df.to_csv("test_data.csv", index=False) # Save as test data
-print("Saved Anomaly Data to test_data.csv")
+df.to_csv("train_data.csv", index=False) # Save as test data
+print("Saved traning Data to test_data.csv")
 
