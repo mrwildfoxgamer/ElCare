@@ -70,21 +70,15 @@ def append_anomaly_real_time(csv_file, anomaly_start, anomaly_end):
             return start <= hour < end
         return hour >= start or hour < end
     
-    def generate_activity(hour, is_anomaly=False):
-        if is_anomaly:
-            return []  # No activity
-        
-        active_devices = []
-        if is_time_between(hour, *ROUTINE["morning"]):
-            active_devices += ["bedroom_light", "kettle"]
-        elif is_time_between(hour, *ROUTINE["afternoon"]):
-            if random.random() > 0.5: active_devices += ["kitchen_light", "stove"]
-        elif is_time_between(hour, *ROUTINE["evening"]):
-            active_devices += ["tv", "bedroom_light"]
-        elif is_time_between(hour, *ROUTINE["night"]):
-            if random.random() > 0.85: active_devices.append("bathroom_light")
-        
-        return active_devices
+  def generate_activity(hour, is_anomaly=False):
+    if is_anomaly:
+        # Mostly no activity, but occasional abnormal spikes
+        if random.random() < 0.15:  # 15% chance of abnormal burst
+            return random.sample(
+                ["bedroom_light", "tv", "kettle", "stove", "bathroom_light"],
+                random.randint(2, 4)
+            )
+        return []  # no activity most of the time
     
     def append_to_csv(events, filename):
         if not events: return
