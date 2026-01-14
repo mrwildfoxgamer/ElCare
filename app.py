@@ -32,19 +32,27 @@ processes = {
 def start_script(script_key):
     global processes
     if processes.get(script_key) is None:
-        proc = subprocess.Popen(["python", SCRIPTS[script_key]])
-        processes[script_key] = proc
-        return True
+        try:
+            # Unix/Linux specific for independent process
+            proc = subprocess.Popen(["python", SCRIPTS[script_key]])
+            processes[script_key] = proc
+            return True
+        except Exception as e:
+            print(f"Failed to start {script_key}: {e}")
+            return False
     return False
 
 def stop_script(script_key):
     global processes
     proc = processes.get(script_key)
     if proc:
-        if os.name == 'nt':
-            subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)])
-        else:
-            os.kill(proc.pid, signal.SIGTERM)
+        try:
+            if os.name == 'nt':
+                subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)])
+            else:
+                os.kill(proc.pid, signal.SIGTERM)
+        except Exception as e:
+            print(f"Error stopping process: {e}")
         
         processes[script_key] = None
         return True
@@ -117,6 +125,7 @@ def get_data():
     
     combined_logs = []
 
+    # Read Alerts
     if os.path.exists(LOG_FILE):
         try:
             with open(LOG_FILE, 'r') as f:
@@ -129,6 +138,7 @@ def get_data():
         except Exception as e:
             print(f"Error reading alerts: {e}")
 
+    # Read Warnings
     if os.path.exists(WARNING_FILE):
         try:
             with open(WARNING_FILE, 'r') as f:
@@ -141,9 +151,10 @@ def get_data():
         except Exception as e:
             print(f"Error reading warnings: {e}")
     
+    # Sort by timestamp descending
     combined_logs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
 
-    data["recent_alerts"] = combined_logs[:10]
+    data["recent_alerts"] = combined_logs[:15] # Increased limit for better visibility
     data["total_anomalies"] = len(combined_logs)
             
     return jsonify(data)
@@ -159,100 +170,280 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Elderly Monitoring Dashboard</title>
     <style>
-        :root { --bg: #1a1a2e; --card: #16213e; --text: #e94560; --accent: #0f3460; --white: #fff; }
-        body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg); color: var(--white); padding: 20px; margin: 0; }
+        :root { --bg: #121212; --card: #1e1e1e; --text: #ffffff; --accent: #2c3e50; --red: #e74c3c; --green: #2ecc71; --yellow: #f1c40f; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg); color: var(--text); padding: 20px; margin: 0; }
         
         .container { max-width: 1200px; margin: 0 auto; }
-        h1 { text-align: center; color: var(--text); border-bottom: 2px solid var(--accent); padding-bottom: 10px; }
         
-        .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px; }
-        .control-card { background: var(--card); padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        
-        button { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.2s; width: 100%; margin-top: 10px; }
-        .btn-start { background-color: #2ecc71; color: white; }
-        .btn-stop { background-color: #e74c3c; color: white; }
-        .btn-seq { background-color: #f1c40f; color: black; }
-        .btn-emergency { background-color: #e74c3c; color: white; }
-        button:hover { opacity: 0.9; transform: scale(1.02); }
-        
-        .status-dot { height: 12px; width: 12px; background-color: #555; border-radius: 50%; display: inline-block; margin-right: 5px; }
-        .running { background-color: #2ecc71; box-shadow: 0 0 10px #2ecc71; }
+        h1 { text-align: center; margin-bottom: 30px; letter-spacing: 1px; }
 
-        .data-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        /* GRID LAYOUT FOR TOP SECTION */
+        .top-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; margin-bottom: 40px; }
         
-        .info-box { background: var(--card); padding: 25px; border-radius: 10px; border-left: 5px solid var(--text); }
-        .stat-item { margin-bottom: 15px; border-bottom: 1px solid var(--accent); padding-bottom: 10px; }
-        .stat-label { font-size: 0.9em; color: #a0a0a0; }
-        .stat-value { font-size: 1.5em; font-weight: bold; }
+        .card { background: var(--card); padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         
-        .log-box { background: var(--card); padding: 20px; border-radius: 10px; height: 300px; overflow-y: auto; }
-        .log-entry { background: var(--accent); margin-bottom: 10px; padding: 10px; border-radius: 5px; font-size: 0.9em; }
-        .log-time { color: #f1c40f; font-size: 0.8em; }
+        /* SYSTEM OVERVIEW */
+        .stat-item { margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .stat-label { font-size: 0.9em; color: #bbb; display: block; margin-bottom: 5px; }
+        .stat-value { font-size: 2em; font-weight: bold; }
+        
+        .online-badge {
+            background-color: rgba(46, 204, 113, 0.2);
+            color: var(--green);
+            font-size: 0.5em;
+            padding: 4px 8px;
+            border-radius: 20px;
+            vertical-align: middle;
+            border: 1px solid var(--green);
+            animation: pulse-green 2s infinite;
+        }
+
+        /* ALERTS SECTION (Improved Visibility) */
+        .log-box { height: 350px; overflow-y: auto; padding-right: 10px; }
+        .log-entry { 
+            background: #2c2c2c; margin-bottom: 12px; padding: 15px; border-radius: 8px; 
+            border-left: 6px solid #555; position: relative;
+            transition: all 0.3s ease;
+            animation: slideIn 0.5s ease-out;
+        }
+        .log-entry:hover { transform: translateX(5px); background: #333; }
+        
+        .log-entry.alert { border-color: var(--red); background: rgba(231, 76, 60, 0.1); }
+        .log-entry.warning { border-color: var(--yellow); background: rgba(241, 196, 15, 0.05); }
+        
+        .log-header { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .log-type { font-weight: 800; letter-spacing: 0.5px; }
+        .log-time { font-size: 0.8em; color: #aaa; }
+        
+        /* SOS SECTION */
+        .sos-section { 
+            background: linear-gradient(145deg, #2c0b0b, #1a0505); 
+            border: 2px solid #521818;
+            padding: 30px; 
+            border-radius: 20px; 
+            margin-bottom: 40px; 
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            flex-wrap: wrap;
+        }
+
+        .sos-btn-container { text-align: center; }
+        .sos-btn {
+            width: 120px; height: 120px;
+            border-radius: 50%;
+            background: var(--red);
+            color: white;
+            font-size: 1.5em;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+            animation: pulse-red 1.5s infinite;
+            transition: transform 0.2s;
+        }
+        .sos-btn:active { transform: scale(0.95); }
+
+        .contacts-area { width: 300px; }
+        .contacts-input-group { display: flex; gap: 5px; margin-bottom: 10px; }
+        .contacts-input { flex: 1; padding: 8px; border-radius: 5px; border: 1px solid #444; background: #222; color: white; }
+        .add-btn { background: #3498db; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
+        
+        #contacts-list ul { list-style: none; padding: 0; max-height: 100px; overflow-y: auto; }
+        #contacts-list li { background: rgba(255,255,255,0.1); padding: 5px 10px; margin-bottom: 5px; border-radius: 4px; display: flex; justify-content: space-between; }
+        .remove-contact { color: #e74c3c; cursor: pointer; font-weight: bold; }
+
+        /* ADMIN PANEL */
+        .admin-panel {
+            border-top: 1px dashed #444;
+            padding-top: 20px;
+            margin-top: 40px;
+        }
+        .admin-title { font-size: 1.2em; color: #888; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+        .control-card { background: #181818; padding: 15px; border-radius: 8px; border: 1px solid #333; text-align: center; }
+        
+        .ctrl-btn { padding: 10px; width: 100%; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.2s; }
+        .btn-green { background: #27ae60; color: white; }
+        .btn-red { background: #c0392b; color: white; }
+        .btn-yellow { background: #f39c12; color: #222; }
+        .ctrl-btn:hover { opacity: 0.9; }
+
+        /* STATUS DOTS */
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; background: #555; margin-right: 5px; }
+        .status-dot.active { background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
+
+        /* SOS OVERLAY ANIMATION */
+        #sos-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(20, 0, 0, 0.95);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .calling-icon { font-size: 4em; animation: shake 0.5s infinite; margin-bottom: 20px; }
+        .calling-text { font-size: 2em; color: white; margin-bottom: 10px; }
+        .calling-number { font-size: 1.5em; color: #e74c3c; font-weight: bold; }
+
+        /* ANIMATIONS */
+        @keyframes pulse-green { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(231, 76, 60, 0); } 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); } }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes shake { 0% { transform: rotate(0deg); } 25% { transform: rotate(5deg); } 75% { transform: rotate(-5deg); } 100% { transform: rotate(0deg); } }
 
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>ðŸ¥ Monitor Control Center</h1>
+    <h1>ðŸ¥ Elderly Monitoring Dashboard</h1>
 
-    <div class="controls">
-        <div class="control-card">
-            <h3>Simulation (sim.py)</h3>
-            <div>Status: <span id="status-sim" class="status-dot"></span> <span id="text-sim">Stopped</span></div>
-            <button class="btn-start" onclick="controlScript('start', 'sim')">Start Sim</button>
-            <button class="btn-stop" onclick="controlScript('stop', 'sim')">Stop Sim</button>
+    <div class="top-grid">
+        <div class="card">
+            <h2 style="color: #3498db; margin-top: 0;">System Overview</h2>
+            
+            <div class="stat-item">
+                <span class="stat-label">Sensors Status</span>
+                <span class="stat-value" id="sensor-count">...</span>
+                <span class="online-badge">â—  ONLINE</span>
+            </div>
+
+            <div class="stat-item">
+                <span class="stat-label">Total Anomalies</span>
+                <span class="stat-value" id="total-anomalies">0</span>
+            </div>
+            
+            <div class="stat-item" style="border:none">
+                <span class="stat-label">Last Data Sync</span>
+                <span class="stat-value" id="last-update" style="font-size: 1.2em; color: #aaa">Waiting...</span>
+            </div>
         </div>
 
-        <div class="control-card">
-            <h3>Monitor (monitor.py)</h3>
-            <div>Status: <span id="status-monitor" class="status-dot"></span> <span id="text-monitor">Stopped</span></div>
-            <button class="btn-start" onclick="controlScript('start', 'monitor')">Start Monitor</button>
-            <button class="btn-stop" onclick="controlScript('stop', 'monitor')">Stop Monitor</button>
-        </div>
-
-        <div class="control-card">
-            <h3>Anomaly Test</h3>
-            <p style="font-size:0.8em; color:#aaa;">Stops Sim -> Runs 2hrs_ano -> Resumes Sim</p>
-            <button class="btn-seq" onclick="triggerSequence()">RUN SEQUENCE</button>
-        </div>
-
-        <div class="control-card">
-            <h3>Force Emergency</h3>
-            <p style="font-size:0.8em; color:#aaa;">Stops Sim -> Runs conf_em -> Resumes Sim</p>
-            <button class="btn-emergency" onclick="triggerConfEm()">FORCE EMERGENCY</button>
+        <div class="card">
+            <h2 style="color: #e74c3c; margin-top: 0;">Recent Alerts Log</h2>
+            <div class="log-box" id="alerts-container">
+                </div>
         </div>
     </div>
 
-    <div class="data-grid">
-        <div class="info-box">
-            <h2>System Overview</h2>
-            
-            <div class="stat-item">
-                <div class="stat-label">Connected Sensors</div>
-                <div class="stat-value" id="sensor-count">Loading...</div>
-            </div>
-
-            <div class="stat-item">
-                <div class="stat-label">Total Anomalies Detected</div>
-                <div class="stat-value" id="total-anomalies">0</div>
-            </div>
-            
-            <div class="stat-item">
-                <div class="stat-label">Last Update</div>
-                <div class="stat-value" id="last-update" style="font-size: 1.2em">Waiting...</div>
-            </div>
+    <div class="sos-section">
+        <div class="sos-btn-container">
+            <button class="sos-btn" onclick="startSOS()">SOS</button>
+            <div style="margin-top: 10px; font-weight: bold; color: #e74c3c;">EMERGENCY</div>
         </div>
+        
+        <div class="contacts-area">
+            <h3>Emergency Contacts</h3>
+            <div class="contacts-input-group">
+                <input type="text" id="contact-input" class="contacts-input" placeholder="Enter Phone Number">
+                <button class="add-btn" onclick="addContact()">Add</button>
+            </div>
+            <div id="contacts-list">
+                <ul id="c-list-ul">
+                    </ul>
+            </div>
+            <p style="font-size: 0.8em; color: #888;">Adding numbers here will include them in the SOS dialing sequence.</p>
+        </div>
+    </div>
 
-        <div class="log-box">
-            <h3>Recent Alerts</h3>
-            <div id="alerts-container">
-                </div>
+    <div class="admin-panel">
+        <div class="admin-title">Admin Control Panel</div>
+        <div class="controls-grid">
+            
+            <div class="control-card">
+                <h4>Simulation Engine</h4>
+                <div><span id="status-sim" class="status-dot"></span> <span id="text-sim">Stopped</span></div>
+                <button class="ctrl-btn btn-green" onclick="controlScript('start', 'sim')">Start Sim</button>
+                <button class="ctrl-btn btn-red" onclick="controlScript('stop', 'sim')">Stop Sim</button>
+            </div>
+
+            <div class="control-card">
+                <h4>Monitoring System</h4>
+                <div><span id="status-monitor" class="status-dot"></span> <span id="text-monitor">Stopped</span></div>
+                <button class="ctrl-btn btn-green" onclick="controlScript('start', 'monitor')">Start Monitor</button>
+                <button class="ctrl-btn btn-red" onclick="controlScript('stop', 'monitor')">Stop Monitor</button>
+            </div>
+
+            <div class="control-card">
+                <h4>Inject Anomaly</h4>
+                <p style="font-size: 0.8em; color: #888;">Seq: Stop Sim -> Run Ano -> Resume Sim</p>
+                <button class="ctrl-btn btn-yellow" onclick="triggerSequence()">RUN SEQUENCE</button>
+            </div>
+
+            <div class="control-card">
+                <h4>Force Emergency</h4>
+                <p style="font-size: 0.8em; color: #888;">Seq: Stop Sim -> Run Conf_Em -> Resume Sim</p>
+                <button class="ctrl-btn btn-red" onclick="triggerConfEm()">FORCE EMERGENCY</button>
+            </div>
+
         </div>
     </div>
 </div>
 
+<div id="sos-overlay">
+    <div class="calling-icon">ðŸ“ž</div>
+    <div class="calling-text">Contacting Emergency Services...</div>
+    <div class="calling-number" id="overlay-number">Connecting...</div>
+    <button onclick="stopSOS()" style="margin-top: 30px; padding: 10px 30px; background: #555; border: 1px solid white; color: white; border-radius: 5px; cursor: pointer;">CANCEL</button>
+</div>
+
 <script>
+    let contacts = ['911', '112']; # Default contacts
+
+    // ================= CONTACTS LOGIC =================
+    function renderContacts() {
+        const ul = document.getElementById('c-list-ul');
+        ul.innerHTML = '';
+        contacts.forEach((num, index) => {
+            const li = document.createElement('li');
+            li.innerHTML = `<span>ðŸ“ž ${num}</span> <span class="remove-contact" onclick="removeContact(${index})">x</span>`;
+            ul.appendChild(li);
+        });
+    }
+
+    function addContact() {
+        const input = document.getElementById('contact-input');
+        if(input.value.trim() !== "") {
+            contacts.push(input.value.trim());
+            input.value = "";
+            renderContacts();
+        }
+    }
+
+    function removeContact(index) {
+        contacts.splice(index, 1);
+        renderContacts();
+    }
+
+    // ================= SOS ANIMATION =================
+    let sosInterval;
+    function startSOS() {
+        const overlay = document.getElementById('sos-overlay');
+        const numberDisplay = document.getElementById('overlay-number');
+        overlay.style.display = 'flex';
+        
+        let i = 0;
+        
+        // Immediate first update
+        if(contacts.length > 0) numberDisplay.innerText = "Dialing: " + contacts[0];
+        
+        sosInterval = setInterval(() => {
+            i = (i + 1) % contacts.length;
+            numberDisplay.innerText = "Dialing: " + contacts[i];
+        }, 2500); // Change number every 2.5 seconds
+    }
+
+    function stopSOS() {
+        clearInterval(sosInterval);
+        document.getElementById('sos-overlay').style.display = 'none';
+    }
+
+    // ================= DASHBOARD LOGIC =================
+    let lastAlertCount = 0;
+
     function updateStatus() {
         fetch('/api/status')
             .then(r => r.json())
@@ -273,36 +464,39 @@ HTML_TEMPLATE = """
                 document.getElementById('last-update').innerText = now.toLocaleTimeString();
 
                 const container = document.getElementById('alerts-container');
-                container.innerHTML = '';
                 
-                if (data.recent_alerts.length === 0) {
-                    container.innerHTML = '<div style="padding:10px; color:#aaa">No activity recorded yet.</div>';
+                // Only redraw if count changed to avoid jitter, 
+                // but in a real app we might check IDs. Simplified here.
+                if (data.recent_alerts.length !== lastAlertCount) {
+                    container.innerHTML = '';
+                    lastAlertCount = data.recent_alerts.length;
+
+                    if (data.recent_alerts.length === 0) {
+                        container.innerHTML = '<div style="padding:10px; color:#666; text-align:center;">No alerts recorded yet.</div>';
+                    }
+
+                    data.recent_alerts.forEach(entry => {
+                        const div = document.createElement('div');
+                        const isAlert = entry.type === 'ALERT';
+                        div.className = isAlert ? 'log-entry alert' : 'log-entry warning';
+                        
+                        const badgeText = isAlert ? 'ðŸš¨ CRITICAL ALERT' : 'âš ï¸  WARNING';
+                        const color = isAlert ? '#e74c3c' : '#f1c40f';
+                        
+                        const dateObj = new Date(entry.timestamp);
+                        const dateStr = dateObj.toLocaleTimeString();
+
+                        div.innerHTML = `
+                            <div class="log-header">
+                                <span class="log-type" style="color:${color}">${badgeText}</span>
+                                <span class="log-time">${dateStr}</span>
+                            </div>
+                            <div style="font-size: 1.1em; margin-bottom: 5px;"><strong>Anomaly Score:</strong> ${entry.anomaly_score.toFixed(4)}</div>
+                            <div style="color: #ccc; font-size: 0.9em;">${entry.active_devices} devices active, ${entry.inactivity_streak}h inactivity streak</div>
+                        `;
+                        container.appendChild(div);
+                    });
                 }
-
-                data.recent_alerts.forEach(entry => {
-                    const div = document.createElement('div');
-                    div.className = 'log-entry';
-                    
-                    const isAlert = entry.type === 'ALERT';
-                    const badgeColor = isAlert ? '#e74c3c' : '#f1c40f';
-                    const badgeText = isAlert ? 'ðŸš¨ CRITICAL' : 'âš ï¸ WARNING';
-                    
-                    div.style.borderLeft = `5px solid ${badgeColor}`;
-                    div.style.background = isAlert ? 'rgba(231, 76, 60, 0.2)' : 'rgba(241, 196, 15, 0.1)';
-
-                    const dateObj = new Date(entry.timestamp);
-                    const dateStr = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString();
-
-                    div.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
-                            <span style="color:${badgeColor}; font-weight:bold;">${badgeText}</span>
-                            <span class="log-time">${dateStr}</span>
-                        </div>
-                        <div><strong>Score:</strong> ${entry.anomaly_score.toFixed(4)}</div>
-                        <div><strong>Details:</strong> ${entry.active_devices} devices, ${entry.inactivity_streak}h inactive</div>
-                    `;
-                    container.appendChild(div);
-                });
             });
     }
     
@@ -310,13 +504,13 @@ HTML_TEMPLATE = """
         const dot = document.getElementById('status-' + name);
         const text = document.getElementById('text-' + name);
         if (isRunning) {
-            dot.classList.add('running');
+            dot.classList.add('active');
             text.innerText = "Running";
             text.style.color = "#2ecc71";
         } else {
-            dot.classList.remove('running');
+            dot.classList.remove('active');
             text.innerText = "Stopped";
-            text.style.color = "#aaa";
+            text.style.color = "#888";
         }
     }
 
@@ -329,21 +523,17 @@ HTML_TEMPLATE = """
     }
 
     function triggerSequence() {
-        if(!confirm("This will stop the simulation, run the anomaly script, and then restart the simulation. Proceed?")) return;
-        
-        fetch('/api/sequence', { method: 'POST' })
-            .then(r => r.json())
-            .then(data => alert(data.message));
+        if(!confirm("Start Anomaly Sequence?")) return;
+        fetch('/api/sequence', { method: 'POST' }).then(r => r.json()).then(data => alert(data.message));
     }
 
     function triggerConfEm() {
-        if(!confirm("This will FORCE an emergency condition. Stop sim -> Run conf_em.py -> Resume sim. Proceed?")) return;
-        
-        fetch('/api/conf_em', { method: 'POST' })
-            .then(r => r.json())
-            .then(data => alert(data.message));
+        if(!confirm("FORCE EMERGENCY?")) return;
+        fetch('/api/conf_em', { method: 'POST' }).then(r => r.json()).then(data => alert(data.message));
     }
 
+    // Init
+    renderContacts();
     setInterval(updateStatus, 2000);
     setInterval(updateData, 2000);
     updateStatus();
