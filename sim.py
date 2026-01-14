@@ -1,105 +1,99 @@
+import random
 import pandas as pd
-import joblib
-from sklearn.ensemble import IsolationForest
+from datetime import datetime, timedelta
 
-# ============================
-# CONFIG
-# ============================
-DATA_FILE = "simulated_house_data.csv"
-MODEL_FILE = "elderly_behavior_model.pkl"
-ANOMALY_CONTAMINATION = 0.05
-INACTIVITY_THRESHOLD_HOURS = 6
+# ----------------------------
+# HOUSE CONFIGURATION
+# ----------------------------
+DEVICES = {
+    "bedroom_light": 12,
+    "bedroom_fan": 60,
+    "kitchen_light": 15,
+    "kettle": 1200,
+    "stove": 1500,
+    "bathroom_light": 10,
+    "tv": 100
+}
 
-# ============================
-# LOAD DATA
-# ============================
-df = pd.read_csv(DATA_FILE)
-df["timestamp"] = pd.to_datetime(df["timestamp"])
+ROUTINE = {
+    "morning": (6, 9),
+    "afternoon": (12, 14),
+    "evening": (18, 21),
+    "night": (22, 5)
+}
 
-# ============================
-# AGGREGATE TO HOURLY DATA
-# ============================
-df["hour"] = df["timestamp"].dt.floor("H")
+# ----------------------------
+# SIMULATION PARAMETERS
+# ----------------------------
+START_DATE = datetime(2026, 1, 1)
+DAYS = 12
+STEP_MINUTES = 10
+EMERGENCY_DAY = 11  # simulate anomaly on this day
 
-hourly = df.groupby("hour").agg(
-    total_power=("power", "sum"),
-    active_devices=("device", "nunique")
-).reset_index()
+# ----------------------------
+# SIMULATION LOGIC
+# ----------------------------
+def is_time_between(hour, start, end):
+    if start <= end:
+        return start <= hour < end
+    return hour >= start or hour < end
 
-# ============================
-# FEATURE ENGINEERING
-# ============================
-hourly["hour_of_day"] = hourly["hour"].dt.hour
-hourly["inactive"] = (hourly["active_devices"] == 0).astype(int)
 
-hourly["inactivity_streak"] = hourly["inactive"].rolling(
-    window=INACTIVITY_THRESHOLD_HOURS,
-    min_periods=1
-).sum()
+def generate_activity(hour, emergency=False):
+    active_devices = []
 
-FEATURES = [
-    "total_power",
-    "active_devices",
-    "hour_of_day",
-    "inactivity_streak"
-]
+    if emergency:
+        return active_devices  # no activity at all
 
-# ============================
-# TRAIN ON NORMAL DATA ONLY
-# (exclude last 24 hours)
-# ============================
-train_data = hourly.iloc[:-24]
-X_train = train_data[FEATURES]
+    if is_time_between(hour, *ROUTINE["morning"]):
+        active_devices += ["bedroom_light", "kettle"]
+        if random.random() > 0.3:
+            active_devices.append("bedroom_fan")
 
-model = IsolationForest(
-    n_estimators=200,
-    contamination=ANOMALY_CONTAMINATION,
-    random_state=42
-)
+    elif is_time_between(hour, *ROUTINE["afternoon"]):
+        if random.random() > 0.5:
+            active_devices += ["kitchen_light", "stove"]
 
-model.fit(X_train)
+    elif is_time_between(hour, *ROUTINE["evening"]):
+        active_devices += ["tv", "bedroom_light"]
 
-# ============================
-# SAVE MODEL
-# ============================
-joblib.dump(model, MODEL_FILE)
+    elif is_time_between(hour, *ROUTINE["night"]):
+        if random.random() > 0.85:
+            active_devices.append("bathroom_light")
 
-# ============================
-# PREDICT ANOMALIES
-# ============================
-X_all = hourly[FEATURES]
+    return active_devices
 
-hourly["anomaly_score"] = model.decision_function(X_all)
-hourly["anomaly"] = model.predict(X_all)
 
-# ============================
-# ALERT LOGIC
-# ============================
-hourly["alert"] = (
-    (hourly["anomaly"] == -1) &
-    (hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)
-)
+# ----------------------------
+# RUN SIMULATION
+# ----------------------------
+events = []
+current_time = START_DATE
 
-# ============================
-# OUTPUT
-# ============================
-alerts = hourly[hourly["alert"]]
+for day in range(DAYS):
+    emergency = (day == EMERGENCY_DAY)
 
-print("Model trained and saved.")
-print(f"Total alerts detected: {len(alerts)}")
+    for _ in range(int(24 * 60 / STEP_MINUTES)):
+        hour = current_time.hour
+        active = generate_activity(hour, emergency)
 
-if not alerts.empty:
-    print("\n🚨 ALERT HOURS:")
-    print(alerts[[
-        "hour",
-        "total_power",
-        "active_devices",
-        "inactivity_streak",
-        "anomaly_score"
-    ]])
-else:
-    print("\nNo alerts detected.")
+        for device in active:
+            events.append({
+                "timestamp": current_time,
+                "device": device,
+                "power": DEVICES[device],
+                "state": "ON"
+            })
 
-# Optional: save results
-hourly.to_csv("ml_results.csv", index=False)
+        current_time += timedelta(minutes=STEP_MINUTES)
+
+# ----------------------------
+# SAVE OUTPUT
+# ----------------------------
+df = pd.DataFrame(events)
+df.to_csv("simulated_house_data.csv", index=False)
+
+print("Simulation complete.")
+print(f"Generated {len(df)} events.")
+print("Saved to simulated_house_data.csv")
 
