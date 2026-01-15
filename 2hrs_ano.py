@@ -8,7 +8,7 @@ import time
 # CONFIGURATION
 # ============================
 CSV_FILE = "test_data.csv"
-ANOMALY_DURATION_HOURS = 7
+ANOMALY_DURATION_HOURS = 7  # 7 hours of COMPLETE inactivity
 STEP_MINUTES = 10  # Must match sim.py
 REAL_TIME_INTERVAL = 1  # Seconds between entries (matches sim.py)
 
@@ -71,15 +71,11 @@ def append_anomaly_real_time(csv_file, anomaly_start, anomaly_end):
         return hour >= start or hour < end
     
     def generate_activity(hour, is_anomaly=False):
-        """Generate activity - during anomaly period, return NO activity"""
+        """Generate activity - during anomaly period, return ZERO activity"""
         if is_anomaly:
-            # During anomaly: mostly no activity, but occasional abnormal spikes
-            if random.random() < 0.15:  # 15% chance of abnormal burst
-                return random.sample(
-                    ["bedroom_light", "tv", "kettle", "stove", "bathroom_light"],
-                    random.randint(2, 4)
-                )
-            return []  # No activity most of the time
+            # CRITICAL FIX: NO activity during anomaly - ZERO bursts
+            # This ensures continuous inactivity streak
+            return []
         
         # Normal activity patterns
         active_devices = []
@@ -110,7 +106,9 @@ def append_anomaly_real_time(csv_file, anomaly_start, anomaly_end):
         except: 
             pass
     
-    print(f"\n--- STARTING INJECTION ---")
+    print(f"\n--- STARTING ANOMALY INJECTION ---")
+    print(f"This will create {ANOMALY_DURATION_HOURS} hours of COMPLETE inactivity")
+    print(f"Expected: CRITICAL ALERT after 5-6 hours\n")
     
     try:
         iteration = 0
@@ -142,7 +140,7 @@ def append_anomaly_real_time(csv_file, anomaly_start, anomaly_end):
             
             append_to_csv(events, csv_file)
             
-            status = "🔴 ANOMALY" if is_anomaly else "🟢 NORMAL"
+            status = "🔴 ANOMALY (NO ACTIVITY)" if is_anomaly else "🟢 NORMAL"
             device_count = len([e for e in events if e['device']])
             
             print(f"[Iter {iteration:04d}] {status} | {current_time.strftime('%H:%M:%S')} | {device_count} devices active")
