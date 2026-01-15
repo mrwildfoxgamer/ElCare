@@ -1,5 +1,4 @@
 import os
-import sys  # Added for sys.executable
 import json
 import time
 import subprocess
@@ -37,8 +36,7 @@ def start_script(script_key):
     global processes
     if processes.get(script_key) is None:
         try:
-            # FIX: Use sys.executable to ensure the same python environment is used
-            proc = subprocess.Popen([sys.executable, SCRIPTS[script_key]])
+            proc = subprocess.Popen(["python", SCRIPTS[script_key]])
             processes[script_key] = proc
             return True
         except Exception as e:
@@ -82,9 +80,8 @@ def run_sequence_logic():
         print("--- Starting Sequence ---")
         stop_script("sim")
         print("Stopped Simulation.")
-        # FIX: Use sys.executable
         print("Running 2hrs_ano.py...")
-        subprocess.run([sys.executable, SCRIPTS["ano_sequence"]])
+        subprocess.run(["python", SCRIPTS["ano_sequence"]])
         print("2hrs_ano.py finished.")
         start_script("sim")
         print("Resumed Simulation.")
@@ -100,9 +97,8 @@ def run_conf_em_logic():
         print("--- Starting Confirmed Emergency Sequence ---")
         stop_script("sim")
         print("Stopped Simulation.")
-        # FIX: Use sys.executable
         print("Running conf_em.py...")
-        subprocess.run([sys.executable, SCRIPTS["conf_em"]])
+        subprocess.run(["python", SCRIPTS["conf_em"]])
         print("conf_em.py finished.")
         start_script("sim")
         print("Resumed Simulation.")
@@ -156,24 +152,35 @@ def get_data():
     
     combined_logs = []
 
-    # Helper to safely read JSON
-    def safe_read_json(filename, log_type):
-        entries = []
-        if os.path.exists(filename):
-            try:
-                with open(filename, 'r') as f:
-                    content = f.read().strip()
-                    if content:
-                        loaded = json.loads(content)
-                        for item in loaded:
-                            item['type'] = log_type
-                            entries.append(item)
-            except (json.JSONDecodeError, IOError):
-                pass # Ignore read errors during race conditions
-        return entries
+    # Read Alerts
+    if os.path.exists(LOG_FILE):
+        try:
+            with open(LOG_FILE, 'r') as f:
+                content = f.read().strip()
+                if content:
+                    alerts = json.loads(content)
+                    for a in alerts:
+                        a['type'] = 'ALERT'
+                        combined_logs.append(a)
+        except json.JSONDecodeError:
+            print(f"Invalid JSON in {LOG_FILE}")
+        except Exception as e:
+            print(f"Error reading alerts: {e}")
 
-    combined_logs.extend(safe_read_json(LOG_FILE, 'ALERT'))
-    combined_logs.extend(safe_read_json(WARNING_FILE, 'WARNING'))
+    # Read Warnings
+    if os.path.exists(WARNING_FILE):
+        try:
+            with open(WARNING_FILE, 'r') as f:
+                content = f.read().strip()
+                if content:
+                    warnings = json.loads(content)
+                    for w in warnings:
+                        w['type'] = 'WARNING'
+                        combined_logs.append(w)
+        except json.JSONDecodeError:
+            print(f"Invalid JSON in {WARNING_FILE}")
+        except Exception as e:
+            print(f"Error reading warnings: {e}")
     
     # Sort by timestamp descending
     combined_logs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
@@ -719,12 +726,8 @@ HTML_TEMPLATE = """
                         
                         const dateObj = new Date(entry.timestamp);
                         const dateStr = dateObj.toLocaleTimeString();
-                        
-                        // FIX: Added handling for anomaly_score or score to prevent JS undefined error
-                        const score = entry.anomaly_score !== undefined ? entry.anomaly_score : entry.score;
-                        const scoreDisp = score ? score.toFixed(4) : "N/A";
 
-                        div.innerHTML = '<div class="log-header"><span class="log-type" style="color:' + color + '">' + badgeText + '</span><span class="log-time">' + dateStr + '</span></div><div style="font-size: 1.1em; margin-bottom: 5px;"><strong>Anomaly Score:</strong> ' + scoreDisp + '</div><div style="color: #ccc; font-size: 0.9em;">' + entry.active_devices + ' devices active, ' + entry.inactivity_streak + 'h inactivity streak</div>';
+                        div.innerHTML = '<div class="log-header"><span class="log-type" style="color:' + color + '">' + badgeText + '</span><span class="log-time">' + dateStr + '</span></div><div style="font-size: 1.1em; margin-bottom: 5px;"><strong>Anomaly Score:</strong> ' + entry.anomaly_score.toFixed(4) + '</div><div style="color: #ccc; font-size: 0.9em;">' + entry.active_devices + ' devices active, ' + entry.inactivity_streak + 'h inactivity streak</div>';
                         container.appendChild(div);
                     });
                 }
@@ -779,5 +782,5 @@ HTML_TEMPLATE = """
 """
 
 if __name__ == "__main__":
-    print("Starting Control Dashboard on http://localhost:5000")
-    app.run(host = '0.0.0.0',debug=True, port=5000)
+    print("Starting Control Dashboard on http://0.0.0.0:5001")
+    app.run(host='0.0.0.0',debug=True, port=5002)

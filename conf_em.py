@@ -32,7 +32,7 @@ def force_emergency():
     
     # Add 24 entries (4 hours) with timestamps but empty device data
     # This creates the illusion of monitoring continuing but zero activity
-    for i in range(42):
+    for i in range(24):
         # Empty row with just timestamp = no activity detected
         emergency_entries.append({
             "timestamp": current_time,

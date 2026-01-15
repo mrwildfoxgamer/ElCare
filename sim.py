@@ -71,18 +71,21 @@ def append_to_csv(events, filename):
     """Append new events to CSV file"""
     df_new = pd.DataFrame(events)
     
-    # Check if file exists and is not empty
-    file_exists = os.path.exists(filename) and os.path.getsize(filename) > 0
-    
-    try:
-        # Append without header if file exists
-        df_new.to_csv(filename, mode='a', header=not file_exists, index=False)
-    except PermissionError:
-        print(f"Write failed: {filename} is open in another program.")
+    # Check if file exists
+    if os.path.exists(filename):
+        # Append without header
+        df_new.to_csv(filename, mode='a', header=False, index=False)
+    else:
+        # Create new file with header
+        df_new.to_csv(filename, mode='w', header=True, index=False)
 
 
 def generate_single_entry(simulated_time=None):
-    """Generate a single 10-minute entry"""
+    """Generate a single 10-minute entry
+    
+    Args:
+        simulated_time: Use this time instead of real time (for simulation)
+    """
     if simulated_time is None:
         simulated_time = datetime.now()
     
@@ -100,16 +103,6 @@ def generate_single_entry(simulated_time=None):
             "state": "ON"
         })
     
-    # FIX: If no devices active, still create a timestamp entry with empty device
-    # This allows monitor.py to track "time passed" even if no power used
-    if not events:
-        events.append({
-            "timestamp": simulated_time,
-            "device": "", 
-            "power": 0,
-            "state": "OFF"
-        })
-    
     return events, simulated_time
 
 
@@ -119,10 +112,14 @@ def generate_single_entry(simulated_time=None):
 if __name__ == "__main__":
     print(f"Starting real-time data generation...")
     print(f"Appending to: {CSV_FILE}")
+    print(f"Simulated time step: {STEP_MINUTES} minutes")
+    print(f"Real-world interval: {REAL_TIME_INTERVAL} second(s)")
+    print(f"Time compression: {STEP_MINUTES * 60}x (10 min = 1 sec)")
+    print(f"Continuous mode: {RUN_CONTINUOUSLY}")
+    print("-" * 50)
     
     # Initialize simulated time
-    simulated_time = datetime.now()
-    
+    # Check if file exists to continue from last timestamp
     if os.path.exists(CSV_FILE):
         try:
             df_existing = pd.read_csv(CSV_FILE)
@@ -131,10 +128,10 @@ if __name__ == "__main__":
                 last_time = df_existing["timestamp"].max()
                 simulated_time = last_time + timedelta(minutes=STEP_MINUTES)
                 print(f"Resuming from last timestamp: {last_time}")
+                print(f"Next entry will be: {simulated_time}")
             else:
                 simulated_time = datetime.now()
-        except Exception as e:
-            print(f"Error reading existing file, starting new: {e}")
+        except:
             simulated_time = datetime.now()
     else:
         simulated_time = datetime.now()
@@ -143,6 +140,7 @@ if __name__ == "__main__":
     print("-" * 50)
     
     if RUN_CONTINUOUSLY:
+        # Run continuously, generating new data every 1 second (representing 10 minutes)
         try:
             iteration = 0
             while True:
@@ -150,21 +148,30 @@ if __name__ == "__main__":
                 
                 if events:
                     append_to_csv(events, CSV_FILE)
-                    # Count only real devices for display
-                    real_devices = [e for e in events if e['device']]
-                    if real_devices:
-                        print(f"[Iter {iteration:04d}] {timestamp.strftime('%Y-%m-%d %H:%M:%S')} | Added {len(real_devices)} device events")
-                    else:
-                        print(f"[Iter {iteration:04d}] {timestamp.strftime('%Y-%m-%d %H:%M:%S')} | No activity recorded")
+                    print(f"[Iter {iteration:04d}] {timestamp.strftime('%Y-%m-%d %H:%M:%S')} | Added {len(events)} device events")
+                else:
+                    print(f"[Iter {iteration:04d}] {timestamp.strftime('%Y-%m-%d %H:%M:%S')} | No activity (normal)")
                 
+                # Advance simulated time by 10 minutes
                 simulated_time += timedelta(minutes=STEP_MINUTES)
                 iteration += 1
+                
+                # Wait for 1 second in real time
                 time.sleep(REAL_TIME_INTERVAL)
                 
         except KeyboardInterrupt:
-            print("\nStopped by user.")
+            print("\n\nStopped by user.")
+            print(f"Final simulated time: {simulated_time}")
+            print("Data generation completed.")
     
     else:
+        # Generate only one entry
         events, timestamp = generate_single_entry(simulated_time)
-        append_to_csv(events, CSV_FILE)
+        
+        if events:
+            append_to_csv(events, CSV_FILE)
+            print(f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] Added {len(events)} device events")
+        else:
+            print(f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] No activity (normal for this time)")
+        
         print("Single entry generated successfully.")
