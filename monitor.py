@@ -1,4 +1,4 @@
-        # Show reaimport pandas as pd
+        streimport pandas as pd
 import joblib
 import time
 import os
@@ -104,7 +104,9 @@ def infer(hourly):
         "rolling_power_6h"
     ]
 
-    X = hourly[FEATURES]
+    # Ensure clean data for inference
+    X = hourly[FEATURES].fillna(0)
+    
     hourly["ml_score"] = model.decision_function(X)
     hourly["ml_anomaly"] = model.predict(X)
 
@@ -158,7 +160,8 @@ while True:
 
     try:
         df = pd.read_csv(DATA_FILE)
-    except:
+    except Exception:
+        # Wait for file to be ready (handles race conditions)
         time.sleep(CHECK_INTERVAL)
         continue
 
@@ -166,59 +169,67 @@ while True:
         time.sleep(CHECK_INTERVAL)
         continue
 
-    hourly = infer(process(df))
-    latest = hourly.iloc[-1]
-    hour_key = str(latest["hour"])
+    try:
+        processed_data = process(df)
+        hourly = infer(processed_data)
+        latest = hourly.iloc[-1]
+        hour_key = str(latest["hour"])
 
-    # ============================
-    # EMERGENCY ALERT
-    # ============================
-    if latest["alert"] and hour_key not in alerts_seen:
-        alerts_seen.add(hour_key)
+        # ============================
+        # EMERGENCY ALERT
+        # ============================
+        if latest["alert"] and hour_key not in alerts_seen:
+            alerts_seen.add(hour_key)
 
-        print("\n" + "=" * 60)
-        print("🚨🚨🚨 CRITICAL EMERGENCY 🚨🚨🚨")
-        print("=" * 60)
-        print(f"Time: {hour_key}")
-        print(f"Inactivity: {int(latest['inactivity_streak'])} hours")
-        print(f"Active Devices: {int(latest['active_devices'])}")
-        print(f"Total Power: {latest['total_power']:.2f} W")
-        print("=" * 60 + "\n")
+            print("\n" + "=" * 60)
+            print("🚨🚨🚨 CRITICAL EMERGENCY 🚨🚨🚨")
+            print("=" * 60)
+            print(f"Time: {hour_key}")
+            print(f"Inactivity: {int(latest['inactivity_streak'])} hours")
+            print(f"Active Devices: {int(latest['active_devices'])}")
+            print(f"Total Power: {latest['total_power']:.2f} W")
+            print("=" * 60 + "\n")
 
-        log_event(ALERT_LOG, latest.to_dict())
+            log_event(ALERT_LOG, latest.to_dict())
 
-    # ============================
-    # WARNING
-    # ============================
-    elif latest["warning"] and hour_key not in warnings_seen:
-        warnings_seen.add(hour_key)
+        # ============================
+        # WARNING
+        # ============================
+        elif latest["warning"] and hour_key not in warnings_seen:
+            warnings_seen.add(hour_key)
 
-        print("\n⚠️ WARNING: Unusual behavior detected")
-        print(f"Time: {hour_key}")
-        print(f"ML Score: {latest['ml_score']:.4f}")
-        print(f"Inactivity: {int(latest['inactivity_streak'])}h\n")
+            print("\n⚠️ WARNING: Unusual behavior detected")
+            print(f"Time: {hour_key}")
+            print(f"ML Score: {latest['ml_score']:.4f}")
+            print(f"Inactivity: {int(latest['inactivity_streak'])}h\n")
 
-        log_event(WARNING_LOG, latest.to_dict())
+            log_event(WARNING_LOG, latest.to_dict())
 
-    # ============================
-    # LIVE STATUS
-    # ============================
-    else:
-        streak = int(latest["inactivity_streak"])
-        icon = "🟢" if streak < 2 else "🟡" if streak < 4 else "🔴"
+        # ============================
+        # LIVE STATUS
+        # ============================
+        else:
+            streak = int(latest["inactivity_streak"])
+            # Visual indicator logic
+            icon = "🟢" 
+            if streak >= 4:
+                icon = "🔴"
+            elif streak >= 2:
+                icon = "🟡"
 
-        print(
-            f"{icon} {datetime.now().strftime('%H:%M:%S')} | "
-            f"Devices: {int(latest['active_devices'])} | "
-            f"Inactive: {streak}h | "
-            f"ML Score: {latest['ml_score']:.2f}",
-            end="\r"
-        )
+            print(
+                f"{icon} {datetime.now().strftime('%H:%M:%S')} | "
+                f"Devices: {int(latest['active_devices'])} | "
+                f"Inactive: {streak}h | "
+                f"ML Score: {latest['ml_score']:.2f}",
+                end="\r"
+            )
+
+    except Exception as e:
+        print(f"\nProcessing Error: {e}")
 
     last_processed_len = len(df)
-    time.sleep(CHECK_INTERVAL)
-l-time status
-        streak_hours = int(latest['inactivity_streak'])
+    time.sleep(CHECK_INTERVAL)ak_hours = int(latest['inactivity_streak'])
         status_icon = "🟢"
         if streak_hours >= 4:
             status_icon = "🔴"
