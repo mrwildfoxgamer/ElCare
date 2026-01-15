@@ -6,7 +6,6 @@ from datetime import datetime
 import json
 import warnings
 
-# Suppress sklearn warnings about feature names
 warnings.filterwarnings("ignore")
 
 # ============================
@@ -15,7 +14,7 @@ warnings.filterwarnings("ignore")
 DATA_FILE = "test_data.csv"
 MODEL_FILE = "elderly_behavior_model.pkl"
 
-INACTIVITY_THRESHOLD_HOURS = 6
+INACTIVITY_THRESHOLD_HOURS = 5
 CHECK_INTERVAL = 1
 
 ALERT_LOG = "alerts_log.json"
@@ -41,16 +40,16 @@ warnings_seen = set()
 def process(df):
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     
-    # FIX: Filter out empty strings or NaNs in devices to ensure distinct count works for "inactivity"
-    df = df[df['device'].notna() & (df['device'] != "")]
+    # CRITICAL FIX: Don't filter out empty devices - we need them to track time!
+    # Empty device rows indicate "time passed with no activity"
     
     df["hour"] = df["timestamp"].dt.floor("h")
 
+    # Group by hour - include ALL rows
     groups = df.groupby("hour")
     
-    # Handle empty dataframe if filtering removed everything
+    # Handle empty dataframe
     if df.empty:
-        # Return a dummy dataframe with required columns but empty
         return pd.DataFrame(columns=["total_power", "active_devices", "hour_of_day", 
                                    "inactivity_streak", "power_per_device", "rolling_power_6h"])
 
@@ -59,8 +58,12 @@ def process(df):
     hourly = pd.DataFrame(index=full_range)
     hourly.index.name = "hour"
 
+    # Count only non-empty devices for active_devices
     hourly["total_power"] = groups["power"].sum()
-    hourly["active_devices"] = groups["device"].nunique()
+    hourly["active_devices"] = groups.apply(
+        lambda x: x[x['device'].notna() & (x['device'] != "")]['device'].nunique()
+    )
+    
     hourly = hourly.fillna(0).reset_index()
 
     hourly["hour_of_day"] = hourly["hour"].dt.hour
@@ -103,19 +106,21 @@ def infer(hourly):
         window=3, min_periods=1
     ).mean()
     
-    # FIX: Add 'anomaly_score' alias for Frontend compatibility
     hourly["anomaly_score"] = hourly["smoothed_score"]
 
     hourly["ml_anomaly"] = model.predict(X)
     
+    # CRITICAL FIX: Make warnings and alerts more sensitive
+    # Warning: Either ML detects anomaly OR long inactivity
     hourly["warning"] = (
-        (hourly["ml_anomaly"] == -1) ^
-        (hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)
+        (hourly["ml_anomaly"] == -1) |
+        (hourly["inactivity_streak"] >= 3)  # Warning at 3 hours
     )
 
+    # Alert: ML anomaly AND significant inactivity OR extreme inactivity alone
     hourly["alert"] = (
-        (hourly["ml_anomaly"] == -1) &
-        (hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)
+        ((hourly["ml_anomaly"] == -1) & (hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)) |
+        (hourly["inactivity_streak"] >= 7)  # Emergency if 7+ hours regardless
     )
 
     return hourly
@@ -124,7 +129,6 @@ def infer(hourly):
 # LOGGING
 # ============================
 def log_event(file, data):
-    # Convert Timestamp to string for JSON serialization
     if 'timestamp' in data:
         data['timestamp'] = str(data['timestamp'])
     if 'hour' in data:
@@ -160,7 +164,6 @@ while True:
     try:
         df = pd.read_csv(DATA_FILE)
     except Exception as e:
-        # File might be locked or empty being written to
         time.sleep(CHECK_INTERVAL)
         continue
         
@@ -178,7 +181,6 @@ while True:
     hourly = infer(processed_df)
     latest = hourly.iloc[-1]
     
-    # FIX: Ensure timestamp is converted to string for uniqueness check
     hour_key = str(latest["hour"])
 
     # Output status
@@ -186,21 +188,21 @@ while True:
         alerts_seen.add(hour_key)
         print("\n🚨 EMERGENCY ALERT 🚨")
         print("Hour:", hour_key)
-        print("Inactive:", latest["inactivity_streak"], "hours")
+        print("Inactive Streak:", latest["inactivity_streak"], "hours")
+        print("ML Anomaly Score:", latest["anomaly_score"])
+        print("Active Devices:", int(latest["active_devices"]))
         log_event(ALERT_LOG, latest.to_dict())
 
     elif latest["warning"] and hour_key not in warnings_seen:
         warnings_seen.add(hour_key)
         print("\n⚠️ WARNING")
         print("Hour:", hour_key)
+        print("Inactive Streak:", latest["inactivity_streak"], "hours")
+        print("ML Anomaly Score:", latest["anomaly_score"])
         log_event(WARNING_LOG, latest.to_dict())
 
     else:
-        # Only print if devices changed to reduce spam
-        pass 
-        print("🟢 NORMAL |",
-              datetime.now().strftime("%H:%M:%S"),
-              "| Devices:", int(latest["active_devices"]), end="\r")
+        print(f"🟢 NORMAL | {datetime.now().strftime('%H:%M:%S')} | Devices: {int(latest['active_devices'])} | Inactive: {int(latest['inactivity_streak'])}h", end="\r")
 
     last_processed_len = len(df)
     time.sleep(CHECK_INTERVAL)

@@ -15,7 +15,7 @@ REAL_TIME_INTERVAL = 1  # Seconds between entries (matches sim.py)
 # ============================
 # ANOMALY INJECTION (FUTURE)
 # ============================
-def inject_future_anomaly(csv_file, duration_hours=2):
+def inject_future_anomaly(csv_file, duration_hours=7):
     if not os.path.exists(csv_file):
         print(f"Error: {csv_file} not found! Run sim.py first.")
         return None
@@ -70,22 +70,45 @@ def append_anomaly_real_time(csv_file, anomaly_start, anomaly_end):
             return start <= hour < end
         return hour >= start or hour < end
     
-  def generate_activity(hour, is_anomaly=False):
-    if is_anomaly:
-        # Mostly no activity, but occasional abnormal spikes
-        if random.random() < 0.15:  # 15% chance of abnormal burst
-            return random.sample(
-                ["bedroom_light", "tv", "kettle", "stove", "bathroom_light"],
-                random.randint(2, 4)
-            )
-        return []  # no activity most of the time
+    def generate_activity(hour, is_anomaly=False):
+        """Generate activity - during anomaly period, return NO activity"""
+        if is_anomaly:
+            # During anomaly: mostly no activity, but occasional abnormal spikes
+            if random.random() < 0.15:  # 15% chance of abnormal burst
+                return random.sample(
+                    ["bedroom_light", "tv", "kettle", "stove", "bathroom_light"],
+                    random.randint(2, 4)
+                )
+            return []  # No activity most of the time
+        
+        # Normal activity patterns
+        active_devices = []
+        
+        if is_time_between(hour, *ROUTINE["morning"]):
+            active_devices += ["bedroom_light", "kettle"]
+            if random.random() > 0.3:
+                active_devices.append("bedroom_fan")
+        
+        elif is_time_between(hour, *ROUTINE["afternoon"]):
+            if random.random() > 0.5:
+                active_devices += ["kitchen_light", "stove"]
+        
+        elif is_time_between(hour, *ROUTINE["evening"]):
+            active_devices += ["tv", "bedroom_light"]
+        
+        elif is_time_between(hour, *ROUTINE["night"]):
+            if random.random() > 0.85:
+                active_devices.append("bathroom_light")
+        
+        return active_devices
     
     def append_to_csv(events, filename):
         if not events: return
         df_new = pd.DataFrame(events)
         try:
             df_new.to_csv(filename, mode='a', header=False, index=False)
-        except: pass
+        except: 
+            pass
     
     print(f"\n--- STARTING INJECTION ---")
     
@@ -103,14 +126,18 @@ def append_anomaly_real_time(csv_file, anomaly_start, anomaly_end):
             if active_devices:
                 for device in active_devices:
                     events.append({
-                        "timestamp": current_time, "device": device,
-                        "power": DEVICES[device], "state": "ON"
+                        "timestamp": current_time, 
+                        "device": device,
+                        "power": DEVICES[device], 
+                        "state": "ON"
                     })
             else:
-                # Add empty entry to keep time moving
+                # Add empty entry to keep time moving - CRITICAL for anomaly detection
                 events.append({
-                    "timestamp": current_time, "device": "", 
-                    "power": 0, "state": "OFF"
+                    "timestamp": current_time, 
+                    "device": "", 
+                    "power": 0, 
+                    "state": "OFF"
                 })
             
             append_to_csv(events, csv_file)
