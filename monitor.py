@@ -1,4 +1,4 @@
-import pandas as pd
+        # Show reaimport pandas as pd
 import joblib
 import time
 import os
@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 DATA_FILE = "test_data.csv"
 MODEL_FILE = "elderly_behavior_model.pkl"
 
-INACTIVITY_THRESHOLD_HOURS = 5  # Alert threshold
+INACTIVITY_THRESHOLD_HOURS = 5   # HARD emergency rule
 CHECK_INTERVAL = 1
 
 ALERT_LOG = "alerts_log.json"
@@ -24,63 +24,62 @@ WARNING_LOG = "warnings_log.json"
 # LOAD MODEL
 # ============================
 if not os.path.exists(MODEL_FILE):
-    print(f"Error: {MODEL_FILE} not found. Run train.py first.")
+    print(f"❌ Model not found: {MODEL_FILE}")
+    print("Run train.py first")
     exit(1)
 
 model = joblib.load(MODEL_FILE)
-print("✓ Model loaded")
+print("✅ ML model loaded")
 
 last_processed_len = 0
 alerts_seen = set()
 warnings_seen = set()
 
 # ============================
-# PROCESS DATA
+# DATA PROCESSING
 # ============================
 def process(df):
     df["timestamp"] = pd.to_datetime(df["timestamp"])
-    
-    # CRITICAL: Don't filter out empty devices - we need them to track time!
-    
+
+    # IMPORTANT: keep empty rows for time progression
     df["hour"] = df["timestamp"].dt.floor("h")
-
-    # Group by hour - include ALL rows
     groups = df.groupby("hour")
-    
-    # Handle empty dataframe
-    if df.empty:
-        return pd.DataFrame(columns=["total_power", "active_devices", "hour_of_day", 
-                                   "inactivity_streak", "power_per_device", "rolling_power_6h"])
 
-    full_range = pd.date_range(df["hour"].min(), df["hour"].max(), freq="h")
+    full_range = pd.date_range(
+        start=df["hour"].min(),
+        end=df["hour"].max(),
+        freq="h"
+    )
 
     hourly = pd.DataFrame(index=full_range)
     hourly.index.name = "hour"
 
-    # Count only non-empty devices for active_devices
     hourly["total_power"] = groups["power"].sum()
-    hourly["active_devices"] = groups.apply(
-        lambda x: x[x['device'].notna() & (x['device'] != "")]['device'].nunique()
-    )
-    
-    hourly = hourly.fillna(0).reset_index()
 
+    # Count only real devices
+    hourly["active_devices"] = groups.apply(
+        lambda x: x[x["device"].notna() & (x["device"] != "")]["device"].nunique()
+    )
+
+    hourly = hourly.fillna(0).reset_index()
     hourly["hour_of_day"] = hourly["hour"].dt.hour
+
+    # ============================
+    # TRUE inactivity streak
+    # ============================
     hourly["inactive"] = (hourly["active_devices"] == 0).astype(int)
 
-    # CRITICAL FIX: Calculate cumulative inactivity streak properly
-    # Reset counter when activity is detected
     streak = 0
     streaks = []
     for inactive in hourly["inactive"]:
-        if inactive:
-            streak += 1
-        else:
-            streak = 0
+        streak = streak + 1 if inactive else 0
         streaks.append(streak)
-    
+
     hourly["inactivity_streak"] = streaks
 
+    # ============================
+    # FEATURES
+    # ============================
     hourly["power_per_device"] = (
         hourly["total_power"] / (hourly["active_devices"] + 1)
     )
@@ -91,13 +90,11 @@ def process(df):
 
     return hourly
 
+
 # ============================
-# INFERENCE
+# ML INFERENCE (WARNINGS ONLY)
 # ============================
 def infer(hourly):
-    if hourly.empty:
-        return hourly
-        
     FEATURES = [
         "total_power",
         "active_devices",
@@ -108,59 +105,51 @@ def infer(hourly):
     ]
 
     X = hourly[FEATURES]
-    hourly["score"] = model.decision_function(X)
-    hourly["smoothed_score"] = hourly["score"].rolling(
-        window=3, min_periods=1
-    ).mean()
-    
-    hourly["anomaly_score"] = hourly["smoothed_score"]
-
+    hourly["ml_score"] = model.decision_function(X)
     hourly["ml_anomaly"] = model.predict(X)
-    
-    # STRICTER LOGIC:
-    # Warning: Light anomaly (2-4 hours inactive OR ML detects something odd)
+
+    # ML is ONLY for warnings
     hourly["warning"] = (
-        ((hourly["inactivity_streak"] >= 2) & (hourly["inactivity_streak"] < INACTIVITY_THRESHOLD_HOURS)) |
-        ((hourly["ml_anomaly"] == -1) & (hourly["inactivity_streak"] < INACTIVITY_THRESHOLD_HOURS))
+        (hourly["ml_anomaly"] == -1) &
+        (hourly["inactivity_streak"] < INACTIVITY_THRESHOLD_HOURS)
     )
 
-    # CRITICAL ALERT: 5+ hours of continuous inactivity (life-threatening)
-    hourly["alert"] = (hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS)
+    # RULE-BASED EMERGENCY (NO ML)
+    hourly["alert"] = (
+        hourly["inactivity_streak"] >= INACTIVITY_THRESHOLD_HOURS
+    )
 
     return hourly
+
 
 # ============================
 # LOGGING
 # ============================
 def log_event(file, data):
-    if 'timestamp' in data:
-        data['timestamp'] = str(data['timestamp'])
-    if 'hour' in data:
-        data['hour'] = str(data['hour'])
-        
+    data = data.copy()
+    data["timestamp"] = str(data["hour"])
+
     try:
         if os.path.exists(file):
             with open(file, "r") as f:
-                try:
-                    log = json.load(f)
-                except json.JSONDecodeError:
-                    log = []
+                log = json.load(f)
         else:
             log = []
-        
+
         log.append(data)
-        
+
         with open(file, "w") as f:
             json.dump(log, f, indent=2)
     except Exception as e:
-        print(f"Error logging event: {e}")
+        print("Logging error:", e)
+
 
 # ============================
 # MAIN LOOP
 # ============================
-print("\n🏥 Elderly Monitoring System Started")
-print(f"⚠️  WARNING threshold: 2 hours inactivity")
-print(f"🚨 CRITICAL ALERT threshold: {INACTIVITY_THRESHOLD_HOURS} hours inactivity\n")
+print("\n🏥 Elderly Monitoring System ACTIVE")
+print(f"⚠️  Warning: ML-based pattern deviation")
+print(f"🚨 Emergency: {INACTIVITY_THRESHOLD_HOURS}h continuous inactivity\n")
 
 while True:
     if not os.path.exists(DATA_FILE):
@@ -169,51 +158,66 @@ while True:
 
     try:
         df = pd.read_csv(DATA_FILE)
-    except Exception as e:
+    except:
         time.sleep(CHECK_INTERVAL)
         continue
-        
+
     if df.empty or len(df) <= last_processed_len:
         time.sleep(CHECK_INTERVAL)
         continue
 
-    # Process and Infer
-    processed_df = process(df)
-    if processed_df.empty:
-        last_processed_len = len(df)
-        time.sleep(CHECK_INTERVAL)
-        continue
-        
-    hourly = infer(processed_df)
+    hourly = infer(process(df))
     latest = hourly.iloc[-1]
-    
     hour_key = str(latest["hour"])
 
-    # Output status
+    # ============================
+    # EMERGENCY ALERT
+    # ============================
     if latest["alert"] and hour_key not in alerts_seen:
         alerts_seen.add(hour_key)
-        print("\n" + "="*60)
-        print("🚨🚨🚨 CRITICAL EMERGENCY ALERT 🚨🚨🚨")
-        print("="*60)
+
+        print("\n" + "=" * 60)
+        print("🚨🚨🚨 CRITICAL EMERGENCY 🚨🚨🚨")
+        print("=" * 60)
         print(f"Time: {hour_key}")
-        print(f"⏰ CONTINUOUS INACTIVITY: {int(latest['inactivity_streak'])} HOURS")
-        print(f"📊 ML Anomaly Score: {latest['anomaly_score']:.4f}")
-        print(f"💡 Active Devices: {int(latest['active_devices'])}")
-        print(f"⚡ Total Power: {latest['total_power']:.2f}W")
-        print("\n⚠️  IMMEDIATE INTERVENTION REQUIRED")
-        print("="*60 + "\n")
+        print(f"Inactivity: {int(latest['inactivity_streak'])} hours")
+        print(f"Active Devices: {int(latest['active_devices'])}")
+        print(f"Total Power: {latest['total_power']:.2f} W")
+        print("=" * 60 + "\n")
+
         log_event(ALERT_LOG, latest.to_dict())
 
+    # ============================
+    # WARNING
+    # ============================
     elif latest["warning"] and hour_key not in warnings_seen:
         warnings_seen.add(hour_key)
-        print("\n⚠️  WARNING - Unusual Activity Pattern")
+
+        print("\n⚠️ WARNING: Unusual behavior detected")
         print(f"Time: {hour_key}")
-        print(f"Inactive for: {int(latest['inactivity_streak'])} hours")
-        print(f"ML Score: {latest['anomaly_score']:.4f}\n")
+        print(f"ML Score: {latest['ml_score']:.4f}")
+        print(f"Inactivity: {int(latest['inactivity_streak'])}h\n")
+
         log_event(WARNING_LOG, latest.to_dict())
 
+    # ============================
+    # LIVE STATUS
+    # ============================
     else:
-        # Show real-time status
+        streak = int(latest["inactivity_streak"])
+        icon = "🟢" if streak < 2 else "🟡" if streak < 4 else "🔴"
+
+        print(
+            f"{icon} {datetime.now().strftime('%H:%M:%S')} | "
+            f"Devices: {int(latest['active_devices'])} | "
+            f"Inactive: {streak}h | "
+            f"ML Score: {latest['ml_score']:.2f}",
+            end="\r"
+        )
+
+    last_processed_len = len(df)
+    time.sleep(CHECK_INTERVAL)
+l-time status
         streak_hours = int(latest['inactivity_streak'])
         status_icon = "🟢"
         if streak_hours >= 4:
